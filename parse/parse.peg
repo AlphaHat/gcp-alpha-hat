@@ -1,0 +1,130 @@
+package parse
+
+type Calculator Peg {
+ Expression
+}
+
+e <- sp exprOrConditional !.
+exprOrConditional <- (e1 / conditionalExpr)
+
+conditionalExpr <- (if b { p.AddOperator(TypeThen) } then exprOrConditional { p.AddOperator(TypeElse) } else exprOrConditional )+
+b <- b1 ( and b1 { p.AddOperator(TypeAnd) }
+        / or b1 { p.AddOperator(TypeOr) }
+        )*
+b1 <- not b2 { p.AddOperator(TypeNot) }
+    / b2
+    / numericalComparison
+    / stringComparison
+    / timeComparison
+
+b2 <- logicalComparison
+
+timeComparison <- indexT equal indexBegin { p.AddOperator(TypeTimeEqual) }
+
+numericalComparison <-  e1 ( equal e1 { p.AddOperator(TypeEqual) }
+                        / notEqual e1 { p.AddOperator(TypeNotEqual) }
+                        / greaterThan e1 { p.AddOperator(TypeGreaterThan) }
+                        / greaterThanEqual e1 { p.AddOperator(TypeGreaterThanEqual) }
+                        / lessThan e1 { p.AddOperator(TypeLessThan) }
+                        / lessThanEqual e1 { p.AddOperator(TypeLessThanEqual) }
+                        )
+logicalComparison <- booleanValue ( equal booleanValue { p.AddOperator(TypeLogicalEqual) }
+                                  / notEqual booleanValue { p.AddOperator(TypeLogicalNotEqual) }
+                                  )
+
+stringComparison <- stringExpression ( equal stringExpression { p.AddOperator(TypeStringEqual)}
+                                / notEqual stringExpression { p.AddOperator(TypeStringNotEqual) }
+                                )
+
+stringExpression <- stringValue
+                  / categoryIdentifier
+
+booleanValue <- (true
+             / false
+             / open b close
+             )
+
+
+e1 <- e2 ( add e2 { p.AddOperator(TypeAdd) }
+         / minus e2 { p.AddOperator(TypeSubtract) }
+         )*
+e2 <- e3 ( multiply e3 { p.AddOperator(TypeMultiply) }
+         / divide e3 { p.AddOperator(TypeDivide) }
+         / modulus e3 { p.AddOperator(TypeModulus) }
+         )*
+e3 <- e4 ( exponentiation e4 { p.AddOperator(TypeExponentiation) }
+         )*
+e4 <- minus value { p.AddOperator(TypeNegation) }
+    / value
+value <- < [0-9.]+ > sp { p.AddValue(buffer[begin:end]) }
+       / identifier
+       / open e1 close
+identifier <- specificIdentifier
+            / generalIdentifier
+            / thisIdentifier
+            / functionCall
+
+functionCall <- functionName open functionArgumentList close { p.AddFunctionCall() }
+
+functionArgumentList <- functionArgument (comma functionArgument)*
+functionArgument <- wholeSeries { p.AddFunctionArgument() }
+functionName <- < [a-zA-Z]+[a-zA-Z0-9]* > { p.AddFunctionName(buffer[begin:end]) }
+
+wholeSeries <- ( specificIdentifierRange
+               / generalIdentifierRange
+               / thisIdentifierRange
+               )
+
+specificIdentifier <- 'val' < [0-9]+ > { p.AddIdentifierSpecific(buffer[begin:end]) } timeIndex? sp
+generalIdentifier <- 'val' { p.AddIdentifierGeneral() } timeIndex? sp
+thisIdentifier <- 'this' { p.AddIdentifierThis() } timeIndex sp
+
+specificIdentifierRange <- 'val' < [0-9]+ > { p.AddIdentifierSpecificRange(buffer[begin:end]) } timeRange sp
+generalIdentifierRange <- 'val' { p.AddIdentifierGeneralRange() } timeRange sp
+thisIdentifierRange <- 'this' { p.AddIdentifierThisRange() } timeRange sp
+
+categoryIdentifier <- 'category' { p.AddCategoryIdentifier() } sp
+stringValue <- quote < (!["\\\n\r] .)* > quote { p.AddStringValue(buffer[begin:end]) } sp
+
+timeRange <- openIndex indexComputation colon indexComputation closeIndex { p.AddIndexOperator(TypeTimeRange) }
+
+timeIndex <- openIndex indexComputation closeIndex
+indexComputation <- indexExpr ( add indexExpr { p.AddIndexOperator(TypeAdd) }
+                              / minus indexExpr { p.AddIndexOperator(TypeSubtract) }
+                              )*
+indexExpr <- (indexBegin { p.AddIndexOperator(TypeBegin) }
+             / indexEnd { p.AddIndexOperator(TypeEnd) }
+             / indexT { p.AddIndexOperator(TypeCurrentTime) }
+             / < [0-9]+ > { p.AddIndexValue(buffer[begin:end]) }
+             )
+indexBegin <- 'begin' sp
+indexEnd <- 'end' sp
+indexT <- 't' sp
+openIndex <- '[' sp
+closeIndex <- ']' sp
+if <- 'if' sp
+then <- 'then' sp
+else <- 'else' sp
+true <- 'true' sp { p.AddOperator(TypeTrue) }
+false <- 'false' sp { p.AddOperator(TypeFalse) }
+equal <- ('==' / '=') sp
+notEqual <- ('!=' / '<>') sp
+greaterThan <- '>' sp
+greaterThanEqual <- '>=' sp
+lessThan <- '<' sp
+lessThanEqual <- '<=' sp
+not <- ('not' / '!') sp
+and <- ('and' / '&&') sp
+or <- ('or' / '||') sp
+add <- '+' sp
+minus <- '-' sp
+multiply <- '*' sp
+divide <- '/' sp
+modulus <- '%' sp
+exponentiation <- '^' sp
+open <- '(' sp
+close <- ')' sp
+comma <- ',' sp
+quote <- '"' sp
+colon <- ':' sp
+sp <- ( ' ' / '\t' )*
