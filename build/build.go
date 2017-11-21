@@ -338,7 +338,7 @@ func ReadQuandlConcepts(ctx context.Context) (*term.TermData, error) {
 	}
 
 	// Quandl Concepts
-	quandl.SetAuthToken("bNVrzzZrsyqxjdx2kvBp")
+	quandl.SetAuthToken(os.GetEnv("QUANDL_KEY"))
 
 	offset := len(baseComponents)
 

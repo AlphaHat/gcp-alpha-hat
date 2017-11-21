@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"time"
 
@@ -105,7 +106,7 @@ func GetQuandlDataFull(ctx context.Context, ticker string, seriesName string) *t
 }
 
 func quandlConnect(columnName string) *cache.GenericCache {
-	quandl.SetAuthToken("bNVrzzZrsyqxjdx2kvBp")
+	quandl.SetAuthToken(os.Getenv("QUANDL_KEY"))
 
 	c := cache.NewGenericCache(time.Hour, "quandl", func(ctx context.Context, ticker string) (interface{}, bool) {
 		log.Infof(ctx, "Cache miss")
