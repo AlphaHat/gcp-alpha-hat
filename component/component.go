@@ -76,6 +76,7 @@ const (
 	CrossEntityAggregation             = "Cross Entity Aggregation"
 	GetUniverse                        = "Get Universe"
 	GetData                            = "Get Data"
+	GetBulkData                        = "Get Bulk Data"
 	CombineData                        = "Combine Data"
 	SetWeights                         = "Set Weights"
 	TransformWeights                   = "Transform Weights"

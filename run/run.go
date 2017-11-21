@@ -861,6 +861,13 @@ var ComputationsSteps []ComputationStep = []ComputationStep{
 		ComputeFn:     WrapUniverseData(GetUniverseData, getData),
 	},
 	ComputationStep{
+		Type:          component.GetBulkData,
+		Name:          "",
+		DefaultString: "",
+		ArgCheckFn:    verifyDataField,
+		ComputeFn:     GetBulkData,
+	},
+	ComputationStep{
 		Type:          component.SetWeights,
 		Name:          "",
 		DefaultString: "",
@@ -1481,7 +1488,10 @@ func RunHandlerNoDecoder(ctx context.Context, w http.ResponseWriter, r *http.Req
 	id := runTree(ctx, c, title, terms)
 
 	t := taskqueue.NewPOSTTask("/apiv1/worker", map[string][]string{"id": {id}})
-
+	if t.RetryOptions == nil {
+		t.RetryOptions = &taskqueue.RetryOptions{}
+	}
+	t.RetryOptions.RetryLimit = 2
 	if _, err := taskqueue.Add(ctx, t, ""); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -4627,6 +4637,12 @@ func SetWeightsAndCategory(fn func(EntityMeta) (Series, CategorySeries)) StepFnT
 		}
 
 		return m
+	}
+}
+
+func GetBulkData(c []component.QueryComponent) StepFnType {
+	return func(ctx context.Context, mArr []MultiEntityData) MultiEntityData {
+		return GetVisitCounts(ctx)
 	}
 }
 

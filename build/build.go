@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"regexp"
 	"strings"
 
@@ -247,14 +248,14 @@ func GetBaseComponents() []component.QueryComponent {
 		//component.QueryComponent{22, "with", "with", component.ContextClue, "", "", "", nil},
 		//component.QueryComponent{23, "By Sector", "By Sector", "Classification", "", "", "", nil},
 		//component.QueryComponent{24, component.Yearly, "By Year", component.TimeAggregationFrequency, "", "", "", nil},
-		//component.QueryComponent{24, component.Yearly, "Yearly", component.TimeAggregationFrequency, "", "", "", nil},
+		component.QueryComponent{24, component.Yearly, "Yearly", component.TimeAggregationFrequency, "", "", "", nil},
 		//component.QueryComponent{25, component.Quarterly, "By Quarter", component.TimeAggregationFrequency, "", "", "", nil},
-		//component.QueryComponent{25, component.Quarterly, "Quarterly", component.TimeAggregationFrequency, "", "", "", nil},
+		component.QueryComponent{25, component.Quarterly, "Quarterly", component.TimeAggregationFrequency, "", "", "", nil},
 		//component.QueryComponent{26, component.Monthly, "By Month", component.TimeAggregationFrequency, "", "", "", nil},
-		//component.QueryComponent{26, component.Monthly, "Monthly", component.TimeAggregationFrequency, "", "", "", nil},
+		component.QueryComponent{26, component.Monthly, "Monthly", component.TimeAggregationFrequency, "", "", "", nil},
 		//component.QueryComponent{27, "By Decade", "By Decade", component.TimeAggregationFrequency, "", "", "", nil},
-		//component.QueryComponent{27, component.Daily, "Daily", component.TimeAggregationFrequency, "", "", "", nil},
-		//component.QueryComponent{28, component.Weekly, "Weekly", component.TimeAggregationFrequency, "", "", "", nil},
+		component.QueryComponent{27, component.Daily, "Daily", component.TimeAggregationFrequency, "", "", "", nil},
+		component.QueryComponent{28, component.Weekly, "Weekly", component.TimeAggregationFrequency, "", "", "", nil},
 		//component.QueryComponent{28, component.Weekly, "By Week", component.TimeAggregationFrequency, "", "", "", nil},
 		//component.QueryComponent{29, "Historical", "Historical", "Context Clue", "", "", "", nil},
 		//component.QueryComponent{30, "Event Study", "Event Study:", component.ReportType, "", "", "", nil},
@@ -338,7 +339,7 @@ func ReadQuandlConcepts(ctx context.Context) (*term.TermData, error) {
 	}
 
 	// Quandl Concepts
-	quandl.SetAuthToken(os.GetEnv("QUANDL_KEY"))
+	quandl.SetAuthToken(os.Getenv("QUANDL_KEY"))
 
 	offset := len(baseComponents)
 
