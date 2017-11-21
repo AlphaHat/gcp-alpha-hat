@@ -95,10 +95,10 @@ func GetFromKey(ctx context.Context, keyString string, v interface{}) error {
 	key, err := datastore.DecodeKey(keyString)
 
 	if logError(ctx, err) {
-		return err
+		return datastore.Get(ctx, key, v)
 	}
 
-	return datastore.Get(ctx, key, v)
+	return err
 }
 
 func GetFromField(ctx context.Context, tableName string, fieldName string, fieldValue string, v interface{}) error {
@@ -106,7 +106,7 @@ func GetFromField(ctx context.Context, tableName string, fieldName string, field
 
 	iter := query.Run(ctx)
 
-	_, err := iter.Next(&v)
+	_, err := iter.Next(v)
 
 	if err == datastore.Done {
 		return nil

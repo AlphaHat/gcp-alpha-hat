@@ -22,8 +22,8 @@ import (
 	"github.com/AlphaHat/gcp-alpha-hat/track"
 	"github.com/AlphaHat/gcp-alpha-hat/zstats"
 	"github.com/AlphaHat/regression"
-	"google.golang.org/appengine/delay"
 	"google.golang.org/appengine/log"
+	"google.golang.org/appengine/taskqueue"
 )
 
 // Type Definitions
@@ -418,8 +418,10 @@ func (e ExecutionNode) Execute(ctx context.Context, id string, Title string) Mul
 
 	if len(e.Arguments) > 0 {
 		track.Update(ctx, id, e.Type+": "+e.Arguments[0].QueryComponentOriginalString, 0)
+		log.Infof(ctx, "Execute: %s : %s", e.Type, e.Arguments[0].QueryComponentOriginalString)
 	} else {
 		track.Update(ctx, id, e.Type, 0)
+		log.Infof(ctx, "Execute: %s", e.Type)
 	}
 
 	var med MultiEntityData
@@ -1472,14 +1474,18 @@ func RunHandler(ctx context.Context, w http.ResponseWriter, r *http.Request, tit
 	var c ExecutionNode
 	_ = decoder.Decode(&c)
 
-	id := runTree(ctx, c, title, terms)
-
-	fmt.Fprintf(w, "{\"id\": \"%s\"}\n", id)
+	RunHandlerNoDecoder(ctx, w, r, title, terms, c)
 }
 
 func RunHandlerNoDecoder(ctx context.Context, w http.ResponseWriter, r *http.Request, title string, terms *term.TermData, c ExecutionNode) {
 	id := runTree(ctx, c, title, terms)
 
+	t := taskqueue.NewPOSTTask("/apiv1/worker", map[string][]string{"id": {id}})
+
+	if _, err := taskqueue.Add(ctx, t, ""); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	fmt.Fprintf(w, "{\"id\": \"%s\"}\n", id)
 }
 
@@ -1511,12 +1517,12 @@ func ReRunHandler(ctx context.Context, w http.ResponseWriter, r *http.Request, q
 	http.Redirect(w, r, "/render/"+query, http.StatusTemporaryRedirect)
 }
 
-var laterFunc = delay.Func("key", func(ctx context.Context, id string) {
-	type Dummy struct {
-		Tree []byte
-	}
+// var laterFunc = delay.Func("key")
 
-	var m Dummy
+func WorkerHandler(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("id")
+
+	var m TreeDummy
 
 	db.GetFromKey(ctx, id, &m)
 
@@ -1527,60 +1533,55 @@ var laterFunc = delay.Func("key", func(ctx context.Context, id string) {
 	log.Infof(ctx, "Running id = %s", id)
 	track.Update(ctx, id, "Running", 0)
 	med := t.Execute(ctx, id, "")
-	db.DatabaseInsert(ctx, db.RunData, med, "")
+
+	var m2 DataDummy
+	m2.RunId = id
+	m2.Data, _ = json.Marshal(med)
+
+	db.DatabaseInsert(ctx, db.RunData, &m2, "")
 	track.Update(ctx, id, "Completed", 1)
 	log.Infof(ctx, "Completed id = %s", id)
-})
+}
+
+type TreeDummy struct {
+	Test   string
+	Field2 string
+	Tree   []byte
+}
+
+type DataDummy struct {
+	RunId string
+	Data  []byte
+}
 
 func runTree(ctx context.Context, c ExecutionNode, title string, terms *term.TermData) string {
 	c.ParseTree(terms)
 
-	type Dummy struct {
-		Tree []byte
-	}
-
-	var m Dummy
-	m.Tree, _ = json.Marshal(c)
+	var m TreeDummy
+	temp, _ := json.Marshal(c)
+	m.Tree = temp
+	m.Test = "Zain"
+	m.Field2 = "Hello"
 
 	id := db.DatabaseInsert(ctx, db.RunTree, &m, "")
-
-	// go func(id string) {
-	// 	// defer func() {
-	// 	// 	if r := recover(); r != nil {
-	// 	// 		track.Update(id, "Error", 0)
-	// 	// 		zlog.LogRecovery(r)
-	// 	// 	}
-	// 	// }()
-	// 	track.Update(ctx, id, "Running", 0)
-	// 	med := c.Execute(ctx, id, title)
-	// 	db.DatabaseInsert(ctx, db.RunData, &med, "")
-	// 	track.Update(ctx, id, "Completed", 1)
-	// 	//push.PushMessage("Completed: " + med.Title)
-	// 	//m, _ := json.Marshal(ConvertMultiEntityDataToHighcharts(med))
-	// }(id)
-
-	err := laterFunc.Call(ctx, id)
-
-	if err != nil {
-		log.Errorf(ctx, "runTree error = %s", err)
-	}
 
 	return id
 }
 
-func TreeHandler(ctx context.Context, w http.ResponseWriter, r *http.Request, query string) {
+func TreeHandler(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get(":query")
 
-	type Dummy struct {
-		Tree ExecutionNode `bson:"tree"`
+	log.Infof(ctx, "query = %s", query)
+
+	var m TreeDummy
+
+	err := db.GetFromKey(ctx, query, &m)
+
+	if err != nil {
+		log.Infof(ctx, "tree retrieval error = %s", err)
 	}
 
-	var m Dummy
-
-	db.GetFromKey(ctx, query, &m)
-
-	output, _ := json.Marshal(m.Tree)
-
-	fmt.Fprintf(w, "%s\n", output)
+	fmt.Fprintf(w, "%s\n", m.Tree)
 }
 
 func DataHandler(ctx context.Context, w http.ResponseWriter, r *http.Request, query string) {
@@ -1605,22 +1606,43 @@ func DataHandler(ctx context.Context, w http.ResponseWriter, r *http.Request, qu
 	}
 }
 
-func RawHandler(ctx context.Context, w http.ResponseWriter, r *http.Request, query string) {
+func returnJson(ctx context.Context, w http.ResponseWriter, data interface{}) {
+	m, err := json.Marshal(data)
+
+	if logError(ctx, err) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "%s", m)
+	}
+}
+
+func logError(ctx context.Context, err error) bool {
+	if err == nil {
+		return true
+	}
+
+	log.Warningf(ctx, "Error = %s", err)
+	return false
+}
+
+func RawHandler(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get(":query")
+
 	details := track.GetDetails(ctx, query)
 
 	if query != "" && (details.Message == "" || details.PercentComplete >= 0.999) {
-		type Dummy struct {
-			Data MultiEntityData `bson:"data"`
-		}
+		// type Dummy struct {
+		// 	Data MultiEntityData `bson:"data"`
+		// }
 
-		var m Dummy
+		var m DataDummy
 
-		db.GetFromKey(ctx, query, &m)
+		// db.GetFromKey(ctx, query, &m)
+		db.GetFromField(ctx, db.RunData, "RunId", query, &m)
 
-		output, _ := json.Marshal(m.Data)
-
-		fmt.Fprintf(w, "%s\n", output)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "%s\n", m.Data)
 	} else {
+		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, "%s\n", track.GetData(ctx, query))
 	}
 }

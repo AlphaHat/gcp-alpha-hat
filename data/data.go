@@ -112,7 +112,7 @@ func quandlConnect(columnName string) *cache.GenericCache {
 
 		ts, err := getQuandlTimeSeriesFromDatabase(ctx, ticker)
 
-		if err == nil {
+		if err == nil && ts.Len() > 0 {
 			return ts, true
 		}
 
