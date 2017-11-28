@@ -256,6 +256,7 @@ func GetBaseComponents() []component.QueryComponent {
 		//component.QueryComponent{27, "By Decade", "By Decade", component.TimeAggregationFrequency, "", "", "", nil},
 		component.QueryComponent{27, component.Daily, "Daily", component.TimeAggregationFrequency, "", "", "", nil},
 		component.QueryComponent{28, component.Weekly, "Weekly", component.TimeAggregationFrequency, "", "", "", nil},
+		component.QueryComponent{29, "Percentage Change", "Percentage Change", component.TimeAggregationFrequency, "", "", "", nil},
 		//component.QueryComponent{28, component.Weekly, "By Week", component.TimeAggregationFrequency, "", "", "", nil},
 		//component.QueryComponent{29, "Historical", "Historical", "Context Clue", "", "", "", nil},
 		//component.QueryComponent{30, "Event Study", "Event Study:", component.ReportType, "", "", "", nil},

@@ -326,15 +326,15 @@ func (e ExecutionNode) GetTitle() string {
 	return ""
 }
 
-func (e *ExecutionNode) ParseTree(terms *term.TermData) {
-	e.Arguments = parseArguments(e.Arguments, terms)
+func (e *ExecutionNode) ParseTree(ctx context.Context, terms *term.TermData) {
+	e.Arguments = parseArguments(ctx, e.Arguments, terms)
 
 	for i, _ := range e.Children {
-		(&e.Children[i]).ParseTree(terms)
+		(&e.Children[i]).ParseTree(ctx, terms)
 	}
 }
 
-func parseArguments(c []component.QueryComponent, terms *term.TermData) []component.QueryComponent {
+func parseArguments(ctx context.Context, c []component.QueryComponent, terms *term.TermData) []component.QueryComponent {
 	for i, v := range c {
 		//parsed := build.ExtractQueryComponents(v.QueryComponentOriginalString, terms)
 
@@ -344,7 +344,8 @@ func parseArguments(c []component.QueryComponent, terms *term.TermData) []compon
 
 		// marshalOutput("v", v)
 
-		if c[i].QueryComponentType != component.CustomQuandlCode && c[i].QueryComponentType != component.TimeSeriesFormula && c[i].QueryComponentType != component.RemoveData && c[i].QueryComponentType != component.FreeText && c[i].QueryComponentType != component.RenameEntity {
+		if c[i].QueryComponentType != component.GetBulkData && c[i].QueryComponentType != component.CustomQuandlCode && c[i].QueryComponentType != component.TimeSeriesFormula && c[i].QueryComponentType != component.RemoveData && c[i].QueryComponentType != component.FreeText && c[i].QueryComponentType != component.RenameEntity {
+			log.Infof(ctx, "c[i].QueryComponentType = %s\n", c[i].QueryComponentType)
 			c[i] = build.ExtractQueryComponentExact(v.QueryComponentOriginalString, terms, nil)
 		} else if c[i].QueryComponentType == component.CustomQuandlCode {
 			c[i] = component.QueryComponent{
@@ -398,6 +399,17 @@ func parseArguments(c []component.QueryComponent, terms *term.TermData) []compon
 				component.RenameEntity,
 				v.QueryComponentOriginalString,
 				component.QuandlOpenData,
+				v.QueryComponentOriginalString,
+				nil,
+			}
+		} else if c[i].QueryComponentType == component.GetBulkData {
+			c[i] = component.QueryComponent{
+				0,
+				v.QueryComponentOriginalString,
+				v.QueryComponentOriginalString,
+				component.GetBulkData,
+				v.QueryComponentOriginalString,
+				"Alternative Data",
 				v.QueryComponentOriginalString,
 				nil,
 			}
@@ -1481,6 +1493,9 @@ func RunHandler(ctx context.Context, w http.ResponseWriter, r *http.Request, tit
 	var c ExecutionNode
 	_ = decoder.Decode(&c)
 
+	// m, _ := json.Marshal(c)
+	// log.Infof(ctx, "body = %s", m)
+
 	RunHandlerNoDecoder(ctx, w, r, title, terms, c)
 }
 
@@ -1565,7 +1580,7 @@ type DataDummy struct {
 }
 
 func runTree(ctx context.Context, c ExecutionNode, title string, terms *term.TermData) string {
-	c.ParseTree(terms)
+	c.ParseTree(ctx, terms)
 
 	var m TreeDummy
 	temp, _ := json.Marshal(c)
@@ -1729,26 +1744,26 @@ func RawHandler(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 // 	}
 // }
 
-func ArgcheckHandler(w http.ResponseWriter, r *http.Request, query string, terms *term.TermData) {
-	decoder := json.NewDecoder(r.Body)
-	var c []component.QueryComponent
-	_ = decoder.Decode(&c)
-
-	c = parseArguments(c, terms)
-
-	argcheck, err := findArgcheck(query, c)
-
-	w.Header().Set("Content-Type", "application/json")
-
-	if argcheck == nil {
-		fmt.Fprintf(w, "{\"components\":null, \"error\":\"%s\"}", err)
-	} else {
-		components, err := argcheck(MultiEntityData{}, c)
-		components = parseArguments(components, terms)
-		m, _ := json.Marshal(components)
-		fmt.Fprintf(w, "{\"components\":%s, \"error\":\"%s\"}", m, err)
-	}
-}
+// func ArgcheckHandler(w http.ResponseWriter, r *http.Request, query string, terms *term.TermData) {
+// 	decoder := json.NewDecoder(r.Body)
+// 	var c []component.QueryComponent
+// 	_ = decoder.Decode(&c)
+//
+// 	c = parseArguments(c, terms)
+//
+// 	argcheck, err := findArgcheck(query, c)
+//
+// 	w.Header().Set("Content-Type", "application/json")
+//
+// 	if argcheck == nil {
+// 		fmt.Fprintf(w, "{\"components\":null, \"error\":\"%s\"}", err)
+// 	} else {
+// 		components, err := argcheck(MultiEntityData{}, c)
+// 		components = parseArguments(components, terms)
+// 		m, _ := json.Marshal(components)
+// 		fmt.Fprintf(w, "{\"components\":%s, \"error\":\"%s\"}", m, err)
+// 	}
+// }
 
 func findArgcheck(majorType string, c []component.QueryComponent) (func(MultiEntityData, []component.QueryComponent) ([]component.QueryComponent, error), error) {
 	for _, v := range ComputationsSteps {
@@ -4642,7 +4657,16 @@ func SetWeightsAndCategory(fn func(EntityMeta) (Series, CategorySeries)) StepFnT
 
 func GetBulkData(c []component.QueryComponent) StepFnType {
 	return func(ctx context.Context, mArr []MultiEntityData) MultiEntityData {
-		return GetVisitCounts(ctx)
+		m := mArr[0]
+
+		queryName := c[0]
+		timeRange := c[1]
+
+		startDate, endDate := extractStartEndDate(timeRange)
+		// lastDataPointOnly := timeRange.QueryComponentCanonicalName == "Last Data Point"
+		// allAvailable := timeRange.QueryComponentCanonicalName == "All Available"
+
+		return GetSQLData(ctx, m.GetEntities(), queryName.GetLabel(), startDate, endDate)
 	}
 }
 
