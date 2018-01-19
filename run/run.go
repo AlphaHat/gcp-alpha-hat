@@ -345,7 +345,7 @@ func parseArguments(ctx context.Context, c []component.QueryComponent, terms *te
 		// marshalOutput("v", v)
 
 		if c[i].QueryComponentType != component.GetBulkData && c[i].QueryComponentType != component.CustomQuandlCode && c[i].QueryComponentType != component.TimeSeriesFormula && c[i].QueryComponentType != component.RemoveData && c[i].QueryComponentType != component.FreeText && c[i].QueryComponentType != component.RenameEntity {
-			log.Infof(ctx, "c[i].QueryComponentType = %s\n", c[i].QueryComponentType)
+			// log.Infof(ctx, "c[i].QueryComponentType = %s\n", c[i].QueryComponentType)
 			c[i] = build.ExtractQueryComponentExact(v.QueryComponentOriginalString, terms, nil)
 		} else if c[i].QueryComponentType == component.CustomQuandlCode {
 			c[i] = component.QueryComponent{
@@ -389,7 +389,7 @@ func parseArguments(ctx context.Context, c []component.QueryComponent, terms *te
 				v.QueryComponentOriginalString,
 				component.QuandlOpenData,
 				v.QueryComponentOriginalString,
-				nil,
+				v.QueryComponentParams,
 			}
 		} else if c[i].QueryComponentType == component.RenameEntity {
 			c[i] = component.QueryComponent{
@@ -4662,11 +4662,19 @@ func GetBulkData(c []component.QueryComponent) StepFnType {
 		queryName := c[0]
 		timeRange := c[1]
 
+		var paramMap map[string][]string = make(map[string][]string)
+
+		if len(c) > 2 {
+			for i := 2; i < len(c); i++ {
+				paramMap[c[i].GetLabel()] = c[i].QueryComponentParams
+			}
+		}
+
 		startDate, endDate := extractStartEndDate(timeRange)
 		// lastDataPointOnly := timeRange.QueryComponentCanonicalName == "Last Data Point"
 		// allAvailable := timeRange.QueryComponentCanonicalName == "All Available"
 
-		return GetSQLData(ctx, m.GetEntities(), queryName.GetLabel(), startDate, endDate)
+		return GetSQLData(ctx, m.GetEntities(), queryName.GetLabel(), paramMap, startDate, endDate)
 	}
 }
 

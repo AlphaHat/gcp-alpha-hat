@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"google.golang.org/appengine"
@@ -75,7 +76,7 @@ func QueryStringArray(ctx context.Context, query string, args ...interface{}) []
 	return sArr
 }
 
-func GenericQuery(ctx context.Context, query string, metaMap map[string]SeriesMeta) MultiEntityData {
+func GenericQuery(ctx context.Context, query string, metaMap map[string]SeriesMeta, stringJoiner string) MultiEntityData {
 	var err error
 	if sqlDb == nil {
 		sqlDb, err = connect()
@@ -94,17 +95,24 @@ func GenericQuery(ctx context.Context, query string, metaMap map[string]SeriesMe
 	}
 
 	m.Title = ""
-	var date, entity, field string
+	var date, entity, field, subfield string
 	var data float64
 
 	defer rows.Close()
 	for rows.Next() {
-		err := rows.Scan(&date, &entity, &field, &data)
+		err := rows.Scan(&date, &entity, &field, &subfield, &data)
 
 		if err != nil {
 			log.Errorf(ctx, "query error = %s", err)
 		} else {
 			t, _ := time.Parse("2006-01-02", date)
+
+			seriesMeta := metaMap[field]
+
+			if subfield != "" {
+				seriesMeta.VendorCode = seriesMeta.VendorCode + stringJoiner + subfield
+				seriesMeta.Label = seriesMeta.VendorCode
+			}
 
 			m = m.Insert(
 				EntityMeta{
@@ -112,7 +120,7 @@ func GenericQuery(ctx context.Context, query string, metaMap map[string]SeriesMe
 					UniqueId: entity,
 					IsCustom: true,
 				},
-				metaMap[field],
+				seriesMeta,
 				DataPoint{
 					Time: t,
 					Data: data,
@@ -128,24 +136,24 @@ func GenericQuery(ctx context.Context, query string, metaMap map[string]SeriesMe
 	return m
 }
 
-func GetSQLData(ctx context.Context, entities []string, queryName string, startDate time.Time, endDate time.Time) MultiEntityData {
+func listOfStringsToQuotedCommaList(entities []string) string {
+	for i, v := range entities {
+		entities[i] = "'" + strings.Replace(v, "'", "\\'", -1) + "'"
+	}
+
+	return strings.Join(entities, ", ")
+}
+
+func GetSQLData(ctx context.Context, entities []string, queryName string, parameters map[string][]string, startDate time.Time, endDate time.Time) MultiEntityData {
+
 	metaMap := map[string]SeriesMeta{
 		"Number of Visits": SeriesMeta{
 			VendorCode:    "Number of Visits",
 			Label:         "Number of Visits",
 			Units:         "#",
-			Source:        "Narrative",
+			Source:        "PlaceIQ",
 			Upsample:      ResampleZero,
 			Downsample:    ResampleArithmetic,
-			IsTransformed: false,
-		},
-		"Number of Stores": SeriesMeta{
-			VendorCode:    "Number of Stores",
-			Label:         "Number of Stores",
-			Units:         "#",
-			Source:        "Narrative",
-			Upsample:      ResampleLastValue,
-			Downsample:    ResampleLastValue,
 			IsTransformed: false,
 		},
 		"% of Traffic": SeriesMeta{
@@ -168,20 +176,60 @@ func GetSQLData(ctx context.Context, entities []string, queryName string, startD
 		},
 	}
 
+	var dateRestriction string
+	if !startDate.IsZero() {
+		dateRestriction = " and local_date >= '" + startDate.String() + "' "
+	} else {
+		dateRestriction = ""
+	}
+
+	var dmaRestriction string
+	var dmaList []string
+	var normalization string = "raw"
+	if parameters != nil {
+		dmaList = parameters["DMA"]
+		if len(dmaList) > 0 {
+			dmaRestriction = " and dma in (" + listOfStringsToQuotedCommaList(dmaList) + ")"
+		} else {
+			dmaRestriction = ""
+		}
+
+		norm := parameters["Normalization"]
+		if len(norm) > 0 {
+			switch norm[0] {
+			case "raw":
+				normalization = "raw"
+			case "placeiq":
+				normalization = "placeiq_bg"
+			case "alphahat_raw":
+				normalization = "ah_bg*1000"
+			case "alphahat_smoothed":
+				normalization = "smoothed_bg*1000"
+			default:
+				normalization = "raw"
+			}
+		}
+	}
+
 	var query string
 	switch queryName {
 	case "Number of Visits":
-		query = `select date, brand, "Number of Visits" as field, sum(num_visit) from wow_change group by date, brand`
-	case "Traffic per Store":
-		query = `select date, brand, "Number of Visits" as field_name, sum(num_visit) as field_value
-from wow_change
-where brand = "Whole Foods"
-group by date, brand
-union
-select date, brand, "Number of Stores" as field_name, count(distinct name) as field_value
-from wow_change
-where brand = "Whole Foods"
-group by date, brand`
+		if len(dmaList) > 0 {
+			query = `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, dma as subfield, sum(visit_count) as visit_count FROM location.with_store_count
+			where movement_source = 'background'
+			and brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction + dmaRestriction + `
+			group by local_date, brand, dma`
+		} else {
+			query = `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, "" as subfield, sum(visit_count) as visit_count FROM location.with_store_count
+			where movement_source = 'background'
+			and brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction + dmaRestriction + `
+			group by local_date, brand`
+		}
+
+		query = `SELECT a.date, a.brand, a.field, a.subfield, a.visit_count / b.` + normalization + ` as normalized_visit_count FROM ( ` +
+			query +
+			`) a JOIN location.factors b on a.date = b.date `
+
 	case "Traffic Contribution":
 		query = `(
 select max(date) as date, name, "% of Traffic" as field, sum(num_visit)/(select sum(num_visit) from wow_change b where b.brand=a.brand) from
@@ -198,6 +246,8 @@ and a.date = (select max(date) from wow_change b where b.brand = a.brand and a.n
 )`
 	}
 
+	log.Infof(ctx, "running query = %s", query)
+
 	if appengine.IsDevAppServer() {
 		var m MultiEntityData
 		log.Infof(ctx, "CANNOT DO A SQL CONNECT ON THE DEV SERVER")
@@ -212,7 +262,7 @@ and a.date = (select max(date) from wow_change b where b.brand = a.brand and a.n
 		return m
 	}
 
-	return GenericQuery(ctx, query, metaMap)
+	return GenericQuery(ctx, query, metaMap, " in ")
 }
 
 func GetVisitCounts(ctx context.Context) MultiEntityData {
@@ -229,7 +279,7 @@ group by date, brand`,
 				Downsample:    ResampleArithmetic,
 				IsTransformed: false,
 			},
-		})
+		}, "")
 
 	// 	var err error
 	// 	if sqlDb == nil {
