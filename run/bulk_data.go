@@ -160,7 +160,16 @@ func GetSQLData(ctx context.Context, entities []string, queryName string, parame
 			VendorCode:    "% of Traffic",
 			Label:         "% of Traffic",
 			Units:         "%",
-			Source:        "Narrative",
+			Source:        "PlaceIQ",
+			Upsample:      ResampleLastValue,
+			Downsample:    ResampleLastValue,
+			IsTransformed: false,
+		},
+		"SSS Estimate": SeriesMeta{
+			VendorCode:    "Same-Store Sales Street Est.",
+			Label:         "Same-Store Sales Street Est.",
+			Units:         "%",
+			Source:        "Third-Party",
 			Upsample:      ResampleLastValue,
 			Downsample:    ResampleLastValue,
 			IsTransformed: false,
@@ -186,6 +195,7 @@ func GetSQLData(ctx context.Context, entities []string, queryName string, parame
 	var dmaRestriction string
 	var dmaList []string
 	var normalization string = "raw"
+	var movementSource string = "both"
 	if parameters != nil {
 		dmaList = parameters["DMA"]
 		if len(dmaList) > 0 {
@@ -194,21 +204,60 @@ func GetSQLData(ctx context.Context, entities []string, queryName string, parame
 			dmaRestriction = ""
 		}
 
+		source := parameters["Movement Source"]
+		if len(source) > 0 {
+			switch source[0] {
+			case "Foreground":
+				movementSource = "foreground"
+			case "Background":
+				movementSource = "background"
+			default:
+				movementSource = "both"
+			}
+		}
+
 		norm := parameters["Normalization"]
 		if len(norm) > 0 {
 			switch norm[0] {
 			case "raw":
 				normalization = "raw"
 			case "placeiq":
-				normalization = "placeiq_bg"
+				if movementSource == "foreground" {
+					normalization = "placeiq_fg"
+				} else if movementSource == "background" {
+					normalization = "placeiq_bg"
+				} else {
+					normalization = "placeiq_all"
+				}
 			case "alphahat_raw":
-				normalization = "ah_bg*1000"
+				if movementSource == "foreground" {
+					normalization = "ah_fg*1000"
+				} else if movementSource == "background" {
+					normalization = "ah_bg*1000"
+				} else {
+					normalization = "ah_all*1000"
+				}
 			case "alphahat_smoothed":
-				normalization = "smoothed_bg*1000"
+				if movementSource == "foreground" {
+					normalization = "smoothed_fg*1000"
+				} else if movementSource == "background" {
+					normalization = "smoothed_bg*1000"
+				} else {
+					normalization = "smoothed_all*1000"
+				}
 			default:
 				normalization = "raw"
 			}
 		}
+	}
+
+	var movementSourceQuery string
+	if movementSource == "foreground" {
+		movementSourceQuery = `where movement_source = 'foreground'`
+	} else if movementSource == "background" {
+		movementSourceQuery = `where movement_source = 'background'`
+	} else {
+		movementSourceQuery = `where movement_source in ('background', 'foreground')`
 	}
 
 	var query string
@@ -216,12 +265,12 @@ func GetSQLData(ctx context.Context, entities []string, queryName string, parame
 	case "Number of Visits":
 		if len(dmaList) > 0 {
 			query = `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, dma as subfield, sum(visit_count) as visit_count FROM location.with_store_count
-			where movement_source = 'background'
+			` + movementSourceQuery + `
 			and brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction + dmaRestriction + `
 			group by local_date, brand, dma`
 		} else {
 			query = `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, "" as subfield, sum(visit_count) as visit_count FROM location.with_store_count
-			where movement_source = 'background'
+			` + movementSourceQuery + `
 			and brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction + dmaRestriction + `
 			group by local_date, brand`
 		}
@@ -230,34 +279,59 @@ func GetSQLData(ctx context.Context, entities []string, queryName string, parame
 			query +
 			`) a JOIN location.factors b on a.date = b.date `
 
+	case "Traffic By DMA":
+		query = `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, dma as subfield, sum(visit_count) as visit_count FROM location.with_store_count
+		` + movementSourceQuery + `
+		and brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction + `
+		group by local_date, brand, dma`
+
+		query = `SELECT a.date, a.subfield as brand, a.field, '' as subfield, a.visit_count / b.` + normalization + ` as normalized_visit_count FROM ( ` +
+			query +
+			`) a JOIN location.factors b on a.date = b.date `
+
 	case "Traffic Contribution":
-		query = `(
-select max(date) as date, name, "% of Traffic" as field, sum(num_visit)/(select sum(num_visit) from wow_change b where b.brand=a.brand) from
-wow_change a
-where brand = 'Whole Foods'
-group by name
-)
-union
-(
-select date, name, "WoW Change" as field, wow_change from
-wow_change a
-where brand = 'Whole Foods'
-and a.date = (select max(date) from wow_change b where b.brand = a.brand and a.name = b.name)
-)`
+		dateRestriction = ` and local_date = (select max(local_date) from location.with_store_count) `
+
+		entityList := listOfStringsToQuotedCommaList(entities)
+
+		query1 := `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, dma as subfield, sum(visit_count) as visit_count FROM location.with_store_count
+		` + movementSourceQuery + `
+		and brand in (` + entityList + `) ` + dateRestriction + `
+		group by local_date, brand, dma`
+
+		query2 := `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, '' as subfield, sum(visit_count) as visit_count FROM location.with_store_count
+		` + movementSourceQuery + `
+		and brand in (` + entityList + `) ` + dateRestriction + `
+		group by local_date, brand`
+
+		query = `SELECT a.date, a.subfield as brand, '% of Traffic' as field, '' as subfield, a.visit_count / b.visit_count as value
+			FROM (` +
+			query1 +
+			`) a LEFT JOIN
+			(` +
+			query2 +
+			`) b ON a.brand = b.brand`
+
+	case "SSS Estimate":
+		query = `SELECT date_format(date, '%Y-%m-%d') as date, brand, 'SSS Estimate' as field, '' as subfield, sss FROM location.sss
+		where brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction
 	}
 
 	log.Infof(ctx, "running query = %s", query)
 
 	if appengine.IsDevAppServer() {
+		time.Sleep(time.Second * 1)
 		var m MultiEntityData
 		log.Infof(ctx, "CANNOT DO A SQL CONNECT ON THE DEV SERVER")
 		switch queryName {
 		case "Number of Visits":
 			json.Unmarshal([]byte(bogusData), &m)
-		case "Traffic per Store":
-			json.Unmarshal([]byte(bogusData2), &m)
+		case "Traffic By DMA":
+			json.Unmarshal([]byte(bogusData), &m)
 		case "Traffic Contribution":
-			json.Unmarshal([]byte(bogusData3), &m)
+			json.Unmarshal([]byte(bogusData), &m)
+		case "SSS Estimate":
+			json.Unmarshal([]byte(bogusData), &m)
 		}
 		return m
 	}

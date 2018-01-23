@@ -258,6 +258,7 @@ func GetBaseComponents() []component.QueryComponent {
 		component.QueryComponent{28, component.Weekly, "Weekly", component.TimeAggregationFrequency, "", "", "", nil},
 		component.QueryComponent{29, "Percentage Change", "Percentage Change", component.TimeAggregationFrequency, "", "", "", nil},
 		component.QueryComponent{30, "Cumulative Change", "Cumulative Change", component.TimeAggregationFrequency, "", "", "", nil},
+		component.QueryComponent{31, "Align Last Day", "Align Last Day", component.TimeAggregationFrequency, "", "", "", nil},
 		//component.QueryComponent{28, component.Weekly, "By Week", component.TimeAggregationFrequency, "", "", "", nil},
 		//component.QueryComponent{29, "Historical", "Historical", "Context Clue", "", "", "", nil},
 		//component.QueryComponent{30, "Event Study", "Event Study:", component.ReportType, "", "", "", nil},
@@ -320,7 +321,7 @@ func GetBaseComponents() []component.QueryComponent {
 		//component.QueryComponent{76, "Market Beta", "Market Beta", component.TimeAggregationType, "Market Beta", "Computed", "", nil},
 		//component.QueryComponent{77, "Regression Beta", "Regression Beta", component.TimeAggregationType, "Regression Beta", "Computed", "", nil},
 		//component.QueryComponent{78, "Days Since {Number} Percent Drop", "Days Since {Number} Percent Drop", component.ConceptSecurity, "Days Since {Number} Percent Drop", "Computed", "Days Since 10 Percent Drop", nil},
-		//component.QueryComponent{79, "Union", "Union", "Combine Data", "Union", "Computed", "Union", nil},
+		component.QueryComponent{79, "Union", "Union", "Combine Data", "Union", "Computed", "Union", nil},
 		component.QueryComponent{80, "Field {Number}", "Field {Number}", component.Field, "", "", "Field 1", nil},
 		// component.QueryComponent{81, "Revenues (Thomson)", "Revenues (Thomson)", component.ConceptSecurity, "SREV", component.Thomson, "Revenues (Thomson)", nil},
 	}

@@ -1609,24 +1609,28 @@ func TreeHandler(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "%s\n", m.Tree)
 }
 
-func DataHandler(ctx context.Context, w http.ResponseWriter, r *http.Request, query string) {
+func DataHandler(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get(":query")
+
 	details := track.GetDetails(ctx, query)
 
 	if query != "" && (details.Message == "" || details.PercentComplete >= 0.999) {
-		type Dummy struct {
-			Data MultiEntityData `bson:"data"`
-		}
+		var m DataDummy
 
-		var m Dummy
-
-		db.GetFromKey(ctx, query, &m)
+		db.GetFromField(ctx, db.RunData, "RunId", query, &m)
 
 		chartOptions := GetChartOptions(ctx, r.FormValue("options"))
 
-		output, _ := json.Marshal(ConvertMultiEntityDataToHighcharts(m.Data, chartOptions))
+		var med MultiEntityData
 
+		json.Unmarshal(m.Data, &med)
+
+		output, _ := json.Marshal(ConvertMultiEntityDataToHighcharts(med, chartOptions))
+
+		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, "%s\n", output)
 	} else {
+		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, "%s\n", track.GetData(ctx, query))
 	}
 }
@@ -3046,7 +3050,9 @@ func removeNamedField(field string) func(SingleEntityData) SingleEntityData {
 		keep := make([]Series, 0)
 
 		for _, v := range s.Data {
-			if v.Meta.Label != field && v.Meta.Label != strings.Replace(field, " (Custom)", "", 1) {
+			if v.Meta.Label != field &&
+				v.Meta.Label != strings.Replace(field, " (Custom)", "", 1) &&
+				strings.Replace(v.Meta.Label, " ", "", -1) != strings.Replace(field, " ", "", -1) {
 				keep = append(keep, v)
 			}
 		}
