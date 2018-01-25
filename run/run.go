@@ -438,7 +438,9 @@ func (e ExecutionNode) Execute(ctx context.Context, id string, Title string) Mul
 
 	var med MultiEntityData
 	if stepFn != nil {
+		timer := time.Now()
 		med = stepFn(e.Arguments)(ctx, data)
+		log.Infof(ctx, "time taken was %v", time.Since(timer))
 	} else if len(data) > 0 {
 		med = data[0]
 	}
@@ -1074,13 +1076,6 @@ var ComputationsSteps []ComputationStep = []ComputationStep{
 		DefaultString: "30-Day Forward Return",
 		ArgCheckFn:    verifyNoArguments("{Number}-Day Forward Return", "30-Day Forward Return"),
 		ComputeFn:     WrapNumericalArgumentTS(tsForwardReturn),
-	},
-	ComputationStep{
-		Type:          component.TimeSeriesTransformation,
-		Name:          "Cost Basis Using Volume, Shares, Price",
-		DefaultString: "Cost Basis Using Volume, Shares, Price",
-		ArgCheckFn:    verifyNoArguments("Cost Basis Using Volume, Shares, Price", "Cost Basis Using Volume, Shares, Price"),
-		ComputeFn:     WrapNoArguments(ComputeTS(costBasis)),
 	},
 	ComputationStep{
 		Type:          component.TimeSeriesTransformation,
@@ -2228,10 +2223,10 @@ func geometric(m SeriesMeta, d []DataPoint, w []DataPoint) []DataPoint {
 }
 
 // Resampling Functions
-func resampleOnDatesFast(newDates []time.Time) func(SeriesMeta, []DataPoint, []DataPoint) []DataPoint {
+func resampleOnDatesFast(newDates []time.Time, beginIncomplete bool, endIncomplete bool) func(SeriesMeta, []DataPoint, []DataPoint) []DataPoint {
 	return func(m SeriesMeta, d []DataPoint, w []DataPoint) []DataPoint {
 		if m.Downsample == ResampleArithmetic || m.Downsample == ResampleGeometric {
-			return resampleOnDates(newDates)(m, d, w)
+			return resampleOnDates(newDates, beginIncomplete, endIncomplete)(m, d, w)
 		}
 		// Otherwise, we do a much faster resampling
 
@@ -2271,7 +2266,7 @@ func resampleOnDatesFast(newDates []time.Time) func(SeriesMeta, []DataPoint, []D
 	}
 }
 
-func resampleOnDates(newDates []time.Time) func(SeriesMeta, []DataPoint, []DataPoint) []DataPoint {
+func resampleOnDates(newDates []time.Time, beginIncomplete bool, endIncomplete bool) func(SeriesMeta, []DataPoint, []DataPoint) []DataPoint {
 	return func(m SeriesMeta, d []DataPoint, w []DataPoint) []DataPoint {
 		newData := make([]DataPoint, 0)
 		var newPoints []DataPoint
@@ -2281,18 +2276,25 @@ func resampleOnDates(newDates []time.Time) func(SeriesMeta, []DataPoint, []DataP
 		// fmt.Printf("newDates = %s\n", newDates)
 		// fmt.Printf("zeroDay = %s\n", zeroDay())
 
-		for i, v := range newDates {
-			if i == 0 {
-				newPoints = resampleChunk(time.Time{}, v, d, m)
-				newWeights = resampleChunk(time.Time{}, v, w, weightStub(zeroDay()).Meta)
-			} else {
-				newPoints = resampleChunk(newDates[i-1], v, d, m)
-				newWeights = resampleChunk(time.Time{}, v, w, weightStub(zeroDay()).Meta)
-			}
+		dropBegin := (m.Downsample == ResampleArithmetic || m.Downsample == ResampleGeometric) && beginIncomplete
+		dropEnd := (m.Downsample == ResampleArithmetic || m.Downsample == ResampleGeometric) && endIncomplete
 
-			// fmt.Printf("v = %s, newPoints = %s\n", v, newPoints)
-			if len(newPoints) > 0 && len(newWeights) > 0 && newWeights[len(newWeights)-1].Data != 0 {
-				newData = append(newData, newPoints...)
+		for i, v := range newDates {
+			if (dropBegin && i == 0) || (dropEnd && i == len(newDates)-1) {
+				// Don't add this point because we're told to drop it
+			} else {
+				if i == 0 {
+					newPoints = resampleChunk(time.Time{}, v, d, m)
+					newWeights = resampleChunk(time.Time{}, v, w, weightStub(zeroDay()).Meta)
+				} else {
+					newPoints = resampleChunk(newDates[i-1], v, d, m)
+					newWeights = resampleChunk(time.Time{}, v, w, weightStub(zeroDay()).Meta)
+				}
+
+				// fmt.Printf("v = %s, newPoints = %s\n", v, newPoints)
+				if len(newPoints) > 0 && len(newWeights) > 0 && newWeights[len(newWeights)-1].Data != 0 {
+					newData = append(newData, newPoints...)
+				}
 			}
 		}
 
@@ -2398,8 +2400,16 @@ func getDaysBetween(startDate time.Time, endDate time.Time) []time.Time {
 	return tArr
 }
 
-func getWeeklyDatesBetween(startDate time.Time, endDate time.Time) []time.Time {
+func getWeeklyDatesBetween(startDate time.Time, endDate time.Time) ([]time.Time, bool, bool) {
+	var beginIncomplete = false
+	var endIncomplete = false
+
 	tArr := make([]time.Time, 0)
+
+	if startDate.Weekday() != time.Monday && startDate.Weekday() != time.Saturday {
+		// TODO: This will change depending on what our week boundary is
+		beginIncomplete = true
+	}
 
 	for startDate.Before(endDate) {
 		if startDate.Weekday() == time.Friday {
@@ -2411,9 +2421,10 @@ func getWeeklyDatesBetween(startDate time.Time, endDate time.Time) []time.Time {
 	// Add the end date if it's not included
 	if len(tArr) == 0 || (len(tArr) > 0 && tArr[len(tArr)-1].Before(endDate)) {
 		tArr = append(tArr, endDate)
+		endIncomplete = true
 	}
 
-	return tArr
+	return tArr, beginIncomplete, endIncomplete
 }
 
 func getBOMDate(date time.Time) time.Time {
@@ -2443,43 +2454,73 @@ func getBOMDates(startDate time.Time, endDate time.Time) []time.Time {
 	return tArr
 }
 
-func getMonthlyDates(startDate time.Time, endDate time.Time) []time.Time {
+func getMonthlyDates(startDate time.Time, endDate time.Time) ([]time.Time, bool, bool) {
+	var beginIncomplete = false
+	var endIncomplete = false
+
 	tArr := getBOMDates(startDate, endDate)
+
+	if len(tArr) > 0 && tArr[0].Before(startDate) {
+		beginIncomplete = true
+	}
 
 	for i, _ := range tArr {
 		tArr[i] = getEOMDate(tArr[i])
 		if tArr[i].After(endDate) {
 			tArr[i] = endDate
+			endIncomplete = true
 		}
 	}
 
-	return tArr
+	return tArr, beginIncomplete, endIncomplete
 }
 
-func getQuarterlyDates(startDate time.Time, endDate time.Time) []time.Time {
-	tArr := getMonthlyDates(startDate, endDate)
+func getQuarterlyDates(startDate time.Time, endDate time.Time) ([]time.Time, bool, bool) {
+	tArr, beginIncompleteMonth, endIncompleteMonth := getMonthlyDates(startDate, endDate)
 	newArr := make([]time.Time, 0)
 
+	beginIncomplete := beginIncompleteMonth
+	endIncomplete := endIncompleteMonth
+
+	if len(tArr) > 0 && (tArr[0].Month() != 1 && tArr[0].Month() != 4 && tArr[0].Month() != 8 && tArr[0].Month() != 11) {
+		beginIncomplete = true
+	}
+
+	// TODO: Check the begin and end logic
 	for i, v := range tArr {
-		if v.Month() == 12 || v.Month() == 3 || v.Month() == 6 || v.Month() == 9 || i == (len(tArr)-1) {
+		if v.Month() == 12 || v.Month() == 3 || v.Month() == 6 || v.Month() == 9 {
+			newArr = append(newArr, v)
+		} else if i == (len(tArr) - 1) {
+			endIncomplete = true
 			newArr = append(newArr, v)
 		}
 	}
 
-	return newArr
+	return newArr, beginIncomplete, endIncomplete
 }
 
-func getYearlyDates(startDate time.Time, endDate time.Time) []time.Time {
-	tArr := getMonthlyDates(startDate, endDate)
+func getYearlyDates(startDate time.Time, endDate time.Time) ([]time.Time, bool, bool) {
+	tArr, beginIncompleteMonth, endIncompleteMonth := getMonthlyDates(startDate, endDate)
 	newArr := make([]time.Time, 0)
 
+	beginIncomplete := beginIncompleteMonth
+	endIncomplete := endIncompleteMonth
+
+	if len(tArr) > 0 && tArr[0].Month() != 1 {
+		beginIncomplete = true
+	}
+
+	// TODO: Check the begin and end logic
 	for i, v := range tArr {
-		if v.Month() == 12 || i == (len(tArr)-1) {
+		if v.Month() == 12 {
+			newArr = append(newArr, v)
+		} else if i == (len(tArr) - 1) {
+			endIncomplete = true
 			newArr = append(newArr, v)
 		}
 	}
 
-	return newArr
+	return newArr, beginIncomplete, endIncomplete
 }
 
 func getStartEndDatesForEntity(s SingleEntityData) (time.Time, time.Time) {
@@ -2887,92 +2928,6 @@ func ratio(s SingleEntityData) SingleEntityData {
 	return s
 }
 
-func costBasis(s SingleEntityData) SingleEntityData {
-	if len(s.Data) < 3 {
-		return s
-	}
-
-	var volume, shares, price, cost Series
-
-	for i := 0; i < len(s.Data); i++ {
-		switch i {
-		case 0:
-			volume = s.Data[i]
-		case 1:
-			shares = s.Data[i]
-		case 2:
-			price = s.Data[i]
-		}
-	}
-
-	weightSeries := getWeightSeries(s.Data)
-
-	volDivShares := runBinaryFunctionOnSeries(volume, shares, getWeightSeries(s.Data),
-		func(a float64, b float64) float64 {
-			if b != 0 {
-				return a / b
-			}
-			return 0
-		},
-		metaTransformBinary(
-			func(s1, s2 string) string { return s1 + " / " + s2 },
-			func(s1, s2 string) string { return "%" },
-		),
-	)
-
-	// Union the dates
-	dates1 := getDates(volDivShares.Data)
-	dates2 := getDates(price.Data)
-	newDates := unionDates(dates1, dates2)
-
-	// For each date, get the resampled data. If the resample is anything other than LastValue, no data point for this date
-	resampleFn := resampleOnDates(newDates)
-
-	volDivShares.Data = resampleFn(volDivShares.Meta, volDivShares.Data, weightSeries.Data)
-	price.Data = resampleFn(price.Meta, price.Data, weightSeries.Data)
-
-	cost.Meta = SeriesMeta{
-		VendorCode:    "",
-		Label:         "Cost Basis",
-		Units:         price.Meta.Units,
-		Source:        volDivShares.Meta.Source,
-		Upsample:      ResampleLastValue,
-		Downsample:    ResampleLastValue,
-		IsTransformed: true,
-	}
-
-	cost.Data = make([]DataPoint, 0)
-
-	for i, j := 0, 0; i < len(volDivShares.Data) && j < len(price.Data); {
-		if i == 0 {
-			cost.Data = append(cost.Data, price.Data[0])
-			i++
-		} else if volDivShares.Data[i].Time.Equal(price.Data[j].Time) {
-			cost.Data = append(cost.Data, DataPoint{volDivShares.Data[i].Time, (1-volDivShares.Data[i].Data)*cost.Data[i-1].Data + volDivShares.Data[i].Data*price.Data[i].Data})
-			i++
-			j++
-		} else if volDivShares.Data[i].Time.Before(price.Data[j].Time) {
-			i++
-		} else {
-			j++
-		}
-	}
-
-	//for i := 0; i < len(volDivShares.Data); i++ {
-	//	if i == 0 {
-	//		cost.Data[0] = price.Data[0]
-	//	} else {
-	//		cost.Data[i].Time = volDivShares.Data[i].Time
-	//		cost.Data[i].Data = (1-volDivShares.Data[i].Data)*cost.Data[i-1].Data + volDivShares.Data[i].Data*price.Data[i].Data
-	//	}
-	//}
-
-	s.Data[0] = cost
-	s.Data = s.Data[0:1]
-
-	return s
-}
-
 func categorizeBySector(level list.SectorLevel) func(SingleEntityData) SingleEntityData {
 	// Get all the S&P 500 sector mappings
 	members, sectors, _ := data.GetAllSectorMappings(level)
@@ -3158,36 +3113,36 @@ func latestWeightsHistorical(s SingleEntityData) SingleEntityData {
 
 func rebalanceWeekly(s SingleEntityData) SingleEntityData {
 	startDate, endDate := getStartEndDatesForEntity(s)
-	dates := getWeeklyDatesBetween(startDate, endDate)
+	dates, beginIncomplete, endIncomplete := getWeeklyDatesBetween(startDate, endDate)
 
-	s.Data = applyToWeights(s.Data, resampleOnDates(dates), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
+	s.Data = applyToWeights(s.Data, resampleOnDates(dates, beginIncomplete, endIncomplete), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
 
 	return s
 }
 
 func rebalanceMonthly(s SingleEntityData) SingleEntityData {
 	startDate, endDate := getStartEndDatesForEntity(s)
-	dates := getMonthlyDates(startDate, endDate)
+	dates, beginIncomplete, endIncomplete := getMonthlyDates(startDate, endDate)
 
-	s.Data = applyToWeights(s.Data, resampleOnDates(dates), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
+	s.Data = applyToWeights(s.Data, resampleOnDates(dates, beginIncomplete, endIncomplete), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
 
 	return s
 }
 
 func rebalanceQuarterly(s SingleEntityData) SingleEntityData {
 	startDate, endDate := getStartEndDatesForEntity(s)
-	dates := getQuarterlyDates(startDate, endDate)
+	dates, beginIncomplete, endIncomplete := getQuarterlyDates(startDate, endDate)
 
-	s.Data = applyToWeights(s.Data, resampleOnDates(dates), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
+	s.Data = applyToWeights(s.Data, resampleOnDates(dates, beginIncomplete, endIncomplete), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
 
 	return s
 }
 
 func rebalanceYearly(s SingleEntityData) SingleEntityData {
 	startDate, endDate := getStartEndDatesForEntity(s)
-	dates := getYearlyDates(startDate, endDate)
+	dates, beginIncomplete, endIncomplete := getYearlyDates(startDate, endDate)
 
-	s.Data = applyToWeights(s.Data, resampleOnDates(dates), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
+	s.Data = applyToWeights(s.Data, resampleOnDates(dates, beginIncomplete, endIncomplete), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
 
 	return s
 }
@@ -3197,7 +3152,7 @@ func tsDaily(endDate time.Time) func(SingleEntityData) SingleEntityData {
 		startDate, _ := getStartEndDatesForEntity(s)
 		dates := getDaysBetween(startDate, endDate)
 
-		s.Data = applyToSeries(s.Data, resampleOnDatesFast(dates), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
+		s.Data = applyToSeries(s.Data, resampleOnDatesFast(dates, false, false), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
 
 		return s
 	}
@@ -3206,9 +3161,9 @@ func tsDaily(endDate time.Time) func(SingleEntityData) SingleEntityData {
 func tsByWeek(endDate time.Time) func(SingleEntityData) SingleEntityData {
 	return func(s SingleEntityData) SingleEntityData {
 		startDate, _ := getStartEndDatesForEntity(s)
-		dates := getWeeklyDatesBetween(startDate, endDate)
+		dates, beginIncomplete, endIncomplete := getWeeklyDatesBetween(startDate, endDate)
 
-		s.Data = applyToSeries(s.Data, resampleOnDatesFast(dates), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
+		s.Data = applyToSeries(s.Data, resampleOnDatesFast(dates, beginIncomplete, endIncomplete), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
 
 		return s
 	}
@@ -3217,9 +3172,9 @@ func tsByWeek(endDate time.Time) func(SingleEntityData) SingleEntityData {
 func tsByMonth(endDate time.Time) func(SingleEntityData) SingleEntityData {
 	return func(s SingleEntityData) SingleEntityData {
 		startDate, _ := getStartEndDatesForEntity(s)
-		dates := getMonthlyDates(startDate, endDate)
+		dates, beginIncomplete, endIncomplete := getMonthlyDates(startDate, endDate)
 
-		s.Data = applyToSeries(s.Data, resampleOnDatesFast(dates), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
+		s.Data = applyToSeries(s.Data, resampleOnDatesFast(dates, beginIncomplete, endIncomplete), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
 
 		return s
 	}
@@ -3228,9 +3183,9 @@ func tsByMonth(endDate time.Time) func(SingleEntityData) SingleEntityData {
 func tsByQuarter(endDate time.Time) func(SingleEntityData) SingleEntityData {
 	return func(s SingleEntityData) SingleEntityData {
 		startDate, _ := getStartEndDatesForEntity(s)
-		dates := getQuarterlyDates(startDate, endDate)
+		dates, beginIncomplete, endIncomplete := getQuarterlyDates(startDate, endDate)
 
-		s.Data = applyToSeries(s.Data, resampleOnDatesFast(dates), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
+		s.Data = applyToSeries(s.Data, resampleOnDatesFast(dates, beginIncomplete, endIncomplete), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
 
 		return s
 	}
@@ -3239,9 +3194,9 @@ func tsByQuarter(endDate time.Time) func(SingleEntityData) SingleEntityData {
 func tsByYear(endDate time.Time) func(SingleEntityData) SingleEntityData {
 	return func(s SingleEntityData) SingleEntityData {
 		startDate, _ := getStartEndDatesForEntity(s)
-		dates := getYearlyDates(startDate, endDate)
+		dates, beginIncomplete, endIncomplete := getYearlyDates(startDate, endDate)
 
-		s.Data = applyToSeries(s.Data, resampleOnDatesFast(dates), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
+		s.Data = applyToSeries(s.Data, resampleOnDatesFast(dates, beginIncomplete, endIncomplete), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
 
 		return s
 	}
@@ -3252,7 +3207,7 @@ func tsAllTime() func(SingleEntityData) SingleEntityData {
 		_, endDate := getStartEndDatesForEntity(s)
 		dates := []time.Time{endDate}
 
-		s.Data = applyToSeries(s.Data, resampleOnDatesFast(dates), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
+		s.Data = applyToSeries(s.Data, resampleOnDatesFast(dates, false, false), metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
 
 		return s
 	}
@@ -3463,7 +3418,7 @@ func runBinaryFunctionOnSeries(series1 Series, series2 Series, weightSeries Seri
 	newDates := unionDates(dates1, dates2)
 
 	// For each date, get the resampled data. If the resample is anything other than LastValue, no data point for this date
-	resampleFn := resampleOnDates(newDates)
+	resampleFn := resampleOnDates(newDates, false, false)
 
 	newSeries1 := resampleFn(series1.Meta, series1.Data, weightSeries.Data)
 	newSeries2 := resampleFn(series2.Meta, series2.Data, weightSeries.Data)
@@ -3482,7 +3437,7 @@ func forceSeriesAlignment(sArr []Series) []Series {
 		newDates = unionDates(newDates, getDates(sArr[i].Data))
 	}
 
-	resampleFn := resampleOnDates(newDates)
+	resampleFn := resampleOnDates(newDates, false, false)
 
 	for i, _ := range sArr {
 		weightSeries := getWeightSeries(sArr)
@@ -4602,7 +4557,7 @@ func getDataArrayExact(date time.Time, m MultiEntityData) ([]float64, []string) 
 }
 
 func alignDataPoints(dates []time.Time, m MultiEntityData) MultiEntityData {
-	resampleFn := resampleOnDates(dates)
+	resampleFn := resampleOnDates(dates, false, false)
 
 	for i, v := range m.EntityData {
 		m.EntityData[i].Data = applyToSeries(v.Data, resampleFn, metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
@@ -4774,7 +4729,7 @@ func WrapLatestData() StepFnType {
 
 		lastDay := m.LastDay()
 
-		resampleFn := resampleOnDates([]time.Time{lastDay})
+		resampleFn := resampleOnDates([]time.Time{lastDay}, false, false)
 
 		// Run the resampling on all the series
 
@@ -5532,7 +5487,7 @@ func runFunctionOnSeriesArray(m MultiEntityData, fieldName string, categoryName 
 
 	// Get the resample function
 	// fmt.Printf("newDates = %s\n", newDates)
-	resampleFn := resampleOnDates(newDates)
+	resampleFn := resampleOnDates(newDates, false, false)
 
 	// marshalOutput("series before resample", series)
 	// fmt.Printf("series before resample=%s\n", series)
