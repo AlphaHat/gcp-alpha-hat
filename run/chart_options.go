@@ -52,23 +52,26 @@ func (co ChartOptions) GetSeriesOptionsFromNewName(name string) SeriesOption {
 }
 
 func SaveChartOptions(ctx context.Context, c ChartOptions) string {
-	return db.DatabaseInsert(ctx, db.ChartOptions, c, "")
+	return db.DatabaseInsert(ctx, db.ChartOptions, &c, "")
 }
 
 func GetChartOptions(ctx context.Context, id string) ChartOptions {
-	type Dummy struct {
-		ChartOptions ChartOptions `bson:"chartoptions"`
-	}
-	var m Dummy
+	var m ChartOptions
 
-	if len(id) == 24 {
-		db.GetFromKey(ctx, id, &m)
-	}
+	db.GetFromKey(ctx, id, &m)
 
-	return m.ChartOptions
+	return m
 }
 
-func ChartOptionsHandler(ctx context.Context, w http.ResponseWriter, r *http.Request, query string) {
+func ParseChartOptions(ctx context.Context, inline string) ChartOptions {
+	var co ChartOptions
+
+	json.Unmarshal([]byte(inline), &co)
+
+	return co
+}
+
+func ChartOptionsHandler(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	var c ChartOptions
 	err := decoder.Decode(&c)

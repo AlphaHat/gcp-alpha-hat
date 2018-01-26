@@ -326,7 +326,7 @@ func GetSQLData(ctx context.Context, entities []string, queryName string, parame
 			`) a LEFT JOIN
 			(` +
 			query2 +
-			`) b ON a.brand = b.brand`
+			`) b ON a.brand = b.brand `
 
 	case "SSS Estimate":
 		query = `SELECT date_format(date, '%Y-%m-%d') as date, brand, 'SSS Estimate' as field, '' as subfield, sss FROM location.sss

@@ -1528,7 +1528,7 @@ func ReRunHandler(ctx context.Context, w http.ResponseWriter, r *http.Request, q
 		// }()
 		track.Update(ctx, id, "Running", 0)
 		med := m.Tree.Execute(ctx, id, "")
-		db.DatabaseInsert(ctx, db.RunData, med, "")
+		db.DatabaseInsert(ctx, db.RunData, &med, "")
 		track.Update(ctx, id, "Completed", 1)
 		//push.PushMessage("Completed: " + med.Title)
 		//m, _ := json.Marshal(ConvertMultiEntityDataToHighcharts(med))
@@ -1612,18 +1612,26 @@ func DataHandler(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	if query != "" && (details.Message == "" || details.PercentComplete >= 0.999) {
 		var m DataDummy
 
-		db.GetFromField(ctx, db.RunData, "RunId", query, &m)
+		err := db.GetFromField(ctx, db.RunData, "RunId", query, &m)
 
-		chartOptions := GetChartOptions(ctx, r.FormValue("options"))
+		if err == nil && len(m.Data) > 0 {
+			// chartOptions := GetChartOptions(ctx, r.FormValue("options"))
+			chartOptions := ParseChartOptions(ctx, r.FormValue("options"))
 
-		var med MultiEntityData
+			var med MultiEntityData
 
-		json.Unmarshal(m.Data, &med)
+			json.Unmarshal(m.Data, &med)
 
-		output, _ := json.Marshal(ConvertMultiEntityDataToHighcharts(med, chartOptions))
+			output, _ := json.Marshal(ConvertMultiEntityDataToHighcharts(med, chartOptions))
 
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "%s\n", output)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, "%s\n", output)
+		} else {
+			returnJson(ctx, w, track.TrackData{
+				Message:         "Finishing Up",
+				PercentComplete: 0.9,
+			})
+		}
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, "%s\n", track.GetData(ctx, query))
