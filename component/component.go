@@ -71,7 +71,9 @@ type MajorType string
 const (
 	TimeSeriesTransformation MajorType = "Time Series Transformation"
 	TimeSeriesFormula                  = "Time Series Formula"
+	TimeSlice                          = "Time Slice"
 	RemoveData                         = "Remove Data"
+	KeepData                           = "Keep Data"
 	SameEntityAggregation              = "Same Entity Aggregation"
 	CrossEntityAggregation             = "Cross Entity Aggregation"
 	GetUniverse                        = "Get Universe"

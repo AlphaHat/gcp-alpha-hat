@@ -861,11 +861,25 @@ var ComputationsSteps []ComputationStep = []ComputationStep{
 		ComputeFn:     WrapStringArgumentTS(removeNamedField),
 	},
 	ComputationStep{
+		Type:          component.KeepData,
+		Name:          "",
+		DefaultString: "",
+		ArgCheckFn:    verifyRemoveData,
+		ComputeFn:     WrapStringArgumentTS(keepNamedField),
+	},
+	ComputationStep{
 		Type:          component.RenameEntity,
 		Name:          "",
 		DefaultString: "",
 		ArgCheckFn:    verifyRenameEntity,
 		ComputeFn:     WrapStringArgumentTS(renameEntity),
+	},
+	ComputationStep{
+		Type:          component.TimeSlice,
+		Name:          "",
+		DefaultString: "",
+		ArgCheckFn:    verifyTimeRange,
+		ComputeFn:     TimeSlicer,
 	},
 	ComputationStep{
 		Type:          component.GetData,
@@ -1008,6 +1022,13 @@ var ComputationsSteps []ComputationStep = []ComputationStep{
 		ComputeFn:     WrapNumericalArgumentTS2Multi(AlignEventBeforeAfter(true)),
 	},
 	ComputationStep{
+		Type:          component.TimeSeriesTransformation,
+		Name:          "Hacky Align Quarter for SSS",
+		DefaultString: "Hacky Align Quarter for SSS",
+		ArgCheckFn:    verifyNoArguments("Hacky Align Quarter for SSS", "Hacky Align Quarter for SSS"),
+		ComputeFn:     WrapNoArguments(AlignEventBeforeAfterPreserveDates),
+	},
+	ComputationStep{
 		Type:          component.CombineData,
 		Name:          "Union",
 		DefaultString: "Union",
@@ -1083,6 +1104,13 @@ var ComputationsSteps []ComputationStep = []ComputationStep{
 		DefaultString: component.Daily,
 		ArgCheckFn:    verifyNoArguments(component.Daily, component.Daily),
 		ComputeFn:     WrapNoArguments(AlignCalendar(tsDaily)),
+	},
+	ComputationStep{
+		Type:          component.TimeSeriesTransformation,
+		Name:          "Sample Every {Number} Periods",
+		DefaultString: "Sample Every 7 Periods",
+		ArgCheckFn:    verifyNoArguments("Sample Every {Number} Periods", "Sample Every 7 Periods"),
+		ComputeFn:     WrapNumericalArgumentTS(tsSampleEveryNumPeriods),
 	},
 	ComputationStep{
 		Type:          component.TimeSeriesTransformation,
@@ -1817,6 +1845,10 @@ func verifyNoArguments(computationName string, defaultString string) func(MultiE
 		return c, nil
 	}
 
+}
+
+func verifyTimeRange(m MultiEntityData, c []component.QueryComponent) ([]component.QueryComponent, error) {
+	return verifyDateRange(c)
 }
 
 func verifyDateRange(c []component.QueryComponent) ([]component.QueryComponent, error) {
@@ -2733,6 +2765,103 @@ func AlignEvent(s SingleEntityData) []SingleEntityData {
 	return entityArray
 }
 
+func AlignEventBeforeAfterPreserveDates(ctx context.Context, mArr []MultiEntityData) MultiEntityData {
+	singleSeries := func(s SingleEntityData) ([]SingleEntityData, []time.Time) {
+		beforeInt := 0
+		afterInt := 90
+
+		// Create a new entity
+		var entityArray []SingleEntityData = make([]SingleEntityData, 0)
+
+		weightSeries := getWeightSeries(s.Data)
+
+		// Get all the nonzero periods
+		// startDatesOriginal, _ := getWeightStartEndDates(weightSeries)
+		startDatesUnaltered := getAllStartDates(weightSeries)
+
+		var startDatesOriginal []time.Time
+		// fmt.Printf("startDates before market impact=%s\n", startDatesOriginal)
+
+		startDatesOriginal = startDatesUnaltered
+		// fmt.Printf("startDates after market impact=%s\n", startDatesOriginal)
+
+		startDates := make([]time.Time, len(startDatesOriginal))
+		endDates := make([]time.Time, len(startDatesOriginal))
+
+		for i, _ := range startDatesOriginal {
+			startDates[i] = startDatesOriginal[i].AddDate(0, 0, -beforeInt)
+			endDates[i] = startDatesOriginal[i].AddDate(0, 0, afterInt)
+		}
+
+		for _, v := range s.Data {
+			if !v.IsWeight {
+				// Run a function to break the current series into ones specified by the data points
+				temp, dateRange, _, newAlignedDates, unadjustedDates := breakSeriesOnStartEndDatesAlignData(v, startDates, endDates, startDatesOriginal, startDatesUnaltered)
+
+				for i, v2 := range temp {
+					var e SingleEntityData
+					v2.Meta.Label = v.Meta.Label
+					e.Data = []Series{v2}
+					e.Meta = s.Meta
+					e.Meta.Name = e.Meta.Name + dateRange[i]
+					e.Meta.UniqueId = e.Meta.Name
+					e.Category = e.Category.Insert(newAlignedDates[i], CategoryLabel{Label: s.Category.LookupCategory(unadjustedDates[i])})
+					// if e.Category.Data == nil || len(e.Category.Data) == 0 {
+					// 	e.Category = e.Category.Insert(zeroDay(), CategoryLabel{Label: s.Meta.Name})
+					// }
+					entityArray = updateEntityArray(entityArray, e)
+				}
+			}
+		}
+
+		return entityArray, startDatesOriginal
+	}
+
+	if len(mArr) > 0 {
+		m := mArr[0]
+		tempEntity := make([]SingleEntityData, 0)
+
+		var latestStartDate time.Time
+
+		log.Debugf(ctx, "latestStartDate = %s", latestStartDate)
+
+		for _, v := range m.EntityData {
+			temp, startDatesOriginal := singleSeries(v)
+
+			if len(temp) > 0 {
+				log.Debugf(ctx, "len(temp) > 0")
+
+				tempEntity = append(tempEntity, temp...)
+
+				for _, startDate := range startDatesOriginal {
+					if startDate.After(latestStartDate) {
+						latestStartDate = startDate
+						log.Debugf(ctx, "latestStartDate = %s", latestStartDate)
+					}
+				}
+			}
+		}
+
+		// Restore dates to the data
+
+		delta := latestStartDate.Sub(zeroDay())
+
+		for i, v := range tempEntity {
+			for i2, v2 := range v.Data {
+				for i3, v3 := range v2.Data {
+					tempEntity[i].Data[i2].Data[i3].Time = v3.Time.Add(delta)
+				}
+			}
+		}
+
+		m.EntityData = tempEntity
+
+		return m
+	}
+
+	return MultiEntityData{}
+}
+
 func AlignEventBeforeAfter(marketAlign bool) func(float64, float64) func(SingleEntityData) []SingleEntityData {
 	return func(before, after float64) func(SingleEntityData) []SingleEntityData {
 		return func(s SingleEntityData) []SingleEntityData {
@@ -3006,6 +3135,22 @@ func tsRemoveData(s SingleEntityData) SingleEntityData {
 	s.Data = keep
 
 	return s
+}
+
+func keepNamedField(field string) func(SingleEntityData) SingleEntityData {
+	return func(s SingleEntityData) SingleEntityData {
+		keep := make([]Series, 0)
+
+		for _, v := range s.Data {
+			if v.Meta.Label == field {
+				keep = append(keep, v)
+			}
+		}
+
+		s.Data = keep
+
+		return s
+	}
 }
 
 func removeNamedField(field string) func(SingleEntityData) SingleEntityData {
@@ -3568,6 +3713,31 @@ func tsMultiplyFieldByNumber(field string, number float64) func(SingleEntityData
 	}
 }
 
+func tsSampleEveryNumPeriods(number float64) func(SingleEntityData) SingleEntityData {
+	days := int(number)
+
+	return func(s SingleEntityData) SingleEntityData {
+		s.Data = applyToSeries(s.Data,
+			func(m SeriesMeta, d []DataPoint, w []DataPoint) []DataPoint {
+				// Create new data to return
+				newData := make([]DataPoint, 0, len(d))
+
+				for i := 0; i < len(d); i++ {
+					if i%days == 0 {
+						newData = append(newData, d[i])
+					}
+				}
+
+				return newData
+			},
+			func(m SeriesMeta) SeriesMeta {
+				return m
+			})
+
+		return s
+	}
+}
+
 func tsForwardReturn(number float64) func(SingleEntityData) SingleEntityData {
 	days := int(number)
 
@@ -3929,6 +4099,40 @@ func generateDays(dateStart time.Time, numDays int) []time.Time {
 //		return series1
 //	}
 //}
+
+func TimeSlicer(c []component.QueryComponent) StepFnType {
+	if len(c) > 0 {
+		timeRange := c[0]
+
+		return func(ctx context.Context, mArr []MultiEntityData) MultiEntityData {
+			if len(mArr) > 0 {
+				m := mArr[0]
+
+				startDate, endDate := extractStartEndDate(timeRange)
+				lastDataPointOnly := timeRange.QueryComponentCanonicalName == "Last Data Point"
+				allAvailable := timeRange.QueryComponentCanonicalName == "All Available"
+
+				for i, v := range m.EntityData {
+					for i2, v2 := range v.Data {
+						if lastDataPointOnly && m.EntityData[i].Data[i2].Len() > 0 {
+							m.EntityData[i].Data[i2].Data = []DataPoint{m.EntityData[i].Data[i2].Data[m.EntityData[i].Data[i2].Len()-1]}
+						} else if !allAvailable {
+							m.EntityData[i].Data[i2].Data = getDataBetween(startDate, endDate, v2.Data)
+						}
+					}
+				}
+
+				return m
+			}
+
+			return MultiEntityData{Error: "No data to compute"}
+		}
+	}
+
+	return func(ctx context.Context, mArr []MultiEntityData) MultiEntityData {
+		return MultiEntityData{Error: "No time range specified"}
+	}
+}
 
 func getData(dataField component.QueryComponent, timeRange component.QueryComponent) func(context.Context, EntityMeta) Series {
 	return func(ctx context.Context, e EntityMeta) Series {
