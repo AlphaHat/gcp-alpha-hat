@@ -42,6 +42,50 @@ func getDataEnd(m MultiEntityData) string {
 //	return xAxisType, ""
 //}
 
+func getPlotLineValue(m MultiEntityData, s string) float64 {
+	var data float64
+
+	for _, v := range m.EntityData {
+		for _, v2 := range v.Data {
+			if v2.Meta.Label == s {
+				for _, v3 := range v2.Data {
+					data = v3.Data
+				}
+			}
+		}
+	}
+
+	fmt.Printf("\n\nDATA = %v\n\n\n", data)
+
+	return data
+}
+
+func getPlotLines(m MultiEntityData, chartOptions ChartOptions) []map[string]interface{} {
+	plotLinesInner := make([]map[string]interface{}, 0)
+
+	for _, v := range chartOptions.SeriesOptions {
+		if v.ChartType == "plotLines" {
+
+			plotLinesInner = append(plotLinesInner,
+				map[string]interface{}{
+					"color":  "#FF0000",
+					"width":  2,
+					"value":  getPlotLineValue(m, v.Name),
+					"zIndex": 100,
+					"label": map[string]interface{}{
+						"text":  v.Name,
+						"align": "right",
+						"style": map[string]interface{}{
+							"color": "#FF0000",
+						},
+					},
+				})
+		}
+	}
+
+	return plotLinesInner
+}
+
 func getYAxisHighcharts(m MultiEntityData, chartOptions ChartOptions) []map[string]interface{} {
 	units := m.GetUnits()
 	fields := m.GetFields()
@@ -68,6 +112,12 @@ func getYAxisHighcharts(m MultiEntityData, chartOptions ChartOptions) []map[stri
 				"title": map[string]interface{}{
 					"text": smartBreak(text),
 				},
+			}
+
+			plotLines := getPlotLines(m, chartOptions)
+
+			if len(plotLines) > 0 {
+				yAxis[i]["plotLines"] = plotLines
 			}
 		}
 
@@ -1053,7 +1103,7 @@ func getTimeSeries(m MultiEntityData, chartOptions ChartOptions, hc map[string]i
 
 	showUnits := numFields > 1
 
-	hc["series"] = make([]map[string]interface{}, m.NumSeries(), m.NumSeries())
+	hc["series"] = make([]map[string]interface{}, 0, m.NumSeries())
 
 	var seriesNum int = 0
 
@@ -1092,26 +1142,30 @@ func getTimeSeries(m MultiEntityData, chartOptions ChartOptions, hc map[string]i
 				thisChartType = chartType
 			}
 
-			hc["series"].([]map[string]interface{})[seriesNum] = map[string]interface{}{
-				"name":  v2.Meta.Name + suffix,
-				"type":  thisChartType,
-				"data":  data,
-				"yAxis": axisNum,
-			}
-
-			if lineWidth != "" {
-				hc["series"].([]map[string]interface{})[seriesNum]["lineWidth"] = lineWidth
-			}
-
-			markerSize := chartOptions.GetSeriesOptionsFromNewName(v.Meta.Label).MarkerSize
-
-			if markerSize != "" {
-				hc["series"].([]map[string]interface{})[seriesNum]["marker"] = map[string]interface{}{
-					"radius": markerSize,
+			if thisChartType != "plotLines" {
+				seriesTemp := map[string]interface{}{
+					"name":  v2.Meta.Name + suffix,
+					"type":  thisChartType,
+					"data":  data,
+					"yAxis": axisNum,
 				}
-			}
 
-			seriesNum = seriesNum + 1
+				if lineWidth != "" {
+					seriesTemp["lineWidth"] = lineWidth
+				}
+
+				markerSize := chartOptions.GetSeriesOptionsFromNewName(v.Meta.Label).MarkerSize
+
+				if markerSize != "" {
+					seriesTemp["marker"] = map[string]interface{}{
+						"radius": markerSize,
+					}
+				}
+
+				hc["series"] = append(hc["series"].([]map[string]interface{}), seriesTemp)
+
+				seriesNum = seriesNum + 1
+			}
 		}
 	}
 

@@ -1751,33 +1751,32 @@ func RawHandler(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 // 	}
 // }
 
-// func ExcelHandler(ctx context.Context, w http.ResponseWriter, r *http.Request, query string) {
-// 	queryArr := strings.Split(query, ".")
-// 	var hex string
-//
-// 	if len(queryArr) > 0 {
-// 		hex = queryArr[0]
-// 	}
-// 	details := track.GetDetails(ctx, hex)
-//
-// 	if hex != "" && (details.Message == "" || details.PercentComplete >= 0.999) {
-// 		type Dummy struct {
-// 			Data MultiEntityData `bson:"data"`
-// 		}
-//
-// 		var m Dummy
-//
-// 		db.GetFromKey(ctx, hex, &m)
-//
-// 		sheet := convertMultiEntityDataToSheet(m.Data, false)
-//
-// 		GenerateExcelFile(hex, sheet)
-// 		w.Header().Set("Content-Disposition", "attachment; filename="+hex+".xlsx")
-// 		http.ServeFile(w, r, "/root/dploy/i/"+hex+".xlsx")
-// 	} else {
-// 		fmt.Fprintf(w, "%s\n", track.GetData(ctx, hex))
-// 	}
-// }
+func ExcelHandler(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	hex := r.URL.Query().Get(":query")
+
+	details := track.GetDetails(ctx, hex)
+
+	if hex != "" && (details.Message == "" || details.PercentComplete >= 0.999) {
+		var m DataDummy
+
+		err := db.GetFromField(ctx, db.RunData, "RunId", hex, &m)
+
+		if err == nil && len(m.Data) > 0 {
+
+			var med MultiEntityData
+
+			json.Unmarshal(m.Data, &med)
+
+			sheet := convertMultiEntityDataToSheet(med, false)
+
+			w.Header().Set("Content-Disposition", "attachment; filename="+hex+".xlsx")
+			GenerateExcelFile(ctx, hex, sheet, w)
+			// http.ServeFile(w, r, "/root/dploy/i/"+hex+".xlsx")
+		}
+	} else {
+		fmt.Fprintf(w, "%s\n", track.GetData(ctx, hex))
+	}
+}
 
 // func ArgcheckHandler(w http.ResponseWriter, r *http.Request, query string, terms *term.TermData) {
 // 	decoder := json.NewDecoder(r.Body)
