@@ -9,6 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/bigquery"
+	"cloud.google.com/go/civil"
+
+	"google.golang.org/api/iterator"
 	"google.golang.org/appengine"
 	"google.golang.org/appengine/log"
 
@@ -81,7 +85,84 @@ func QueryStringArray(ctx context.Context, query string, args ...interface{}) []
 	return sArr
 }
 
-func GenericQuery(ctx context.Context, query string, metaMap map[string]SeriesMeta, stringJoiner string, isWeight bool) MultiEntityData {
+// query returns a slice of the results of a query.
+func bigQuery(ctx context.Context, proj string, queryString string) (*bigquery.RowIterator, error) {
+	client, err := bigquery.NewClient(ctx, proj)
+	if err != nil {
+		return nil, err
+	}
+
+	query := client.Query(queryString)
+	// Use standard SQL syntax for queries.
+	// See: https://cloud.google.com/bigquery/sql-reference/
+	query.QueryConfig.UseStandardSQL = false
+	query.QueryConfig.UseLegacySQL = true
+	query.QueryConfig.DisableQueryCache = false
+	return query.Read(ctx)
+}
+
+func GenericBigQuery(ctx context.Context, query string, metaMap map[string]SeriesMeta, stringJoiner string, isWeight bool) MultiEntityData {
+	iter, err := bigQuery(ctx, "altdatahub", query)
+
+	var m MultiEntityData
+
+	if !logError(ctx, err) {
+		return m
+	}
+
+	for {
+		var row []bigquery.Value
+		err := iter.Next(&row)
+		if err == iterator.Done {
+			return m
+		}
+		if !logError(ctx, err) {
+			return m
+		}
+
+		date := row[0].(civil.Date)
+		entity := row[1].(string)
+		field := row[2].(string)
+		subfield := row[3].(string)
+		data := row[4].(float64)
+
+		if err != nil {
+			log.Errorf(ctx, "query error = %s", err)
+		} else {
+			// t, _ := time.Parse("2006-01-02", date)
+			t := time.Date(date.Year, date.Month, date.Day, 0, 0, 0, 0, time.UTC)
+
+			seriesMeta := metaMap[field]
+
+			if subfield != "" {
+				seriesMeta.VendorCode = seriesMeta.VendorCode + stringJoiner + subfield
+				seriesMeta.Label = seriesMeta.VendorCode
+			}
+
+			m = m.Insert(
+				EntityMeta{
+					Name:     entity,
+					UniqueId: entity,
+					IsCustom: true,
+				},
+				seriesMeta,
+				DataPoint{
+					Time: t,
+					Data: data,
+				},
+				CategoryLabel{
+					Id:    0,
+					Label: "",
+				},
+				isWeight)
+		}
+
+	}
+
+	return m
+}
+
+func GenericSQLQuery(ctx context.Context, query string, metaMap map[string]SeriesMeta, stringJoiner string, isWeight bool) MultiEntityData {
 	var err error
 	if sqlDb == nil {
 		sqlDb, err = connect()
@@ -225,6 +306,8 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 		},
 	}
 
+	var isBigQuery bool = false
+
 	var dateRestriction string
 	if !startDate.IsZero() {
 		dateRestriction = " and local_date >= '" + startDate.String() + "' "
@@ -236,11 +319,12 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 	var dmaList []string
 	var normalization string = "raw"
 	var movementSource string = "both"
-	var dataTable string = "location.with_store_count"
+	var dataTable string = "location.brand_no_filter"
 	if parameters != nil {
 		dmaList = parameters["DMA"]
 		if len(dmaList) > 0 {
 			dmaRestriction = " and dma in (" + listOfStringsToQuotedCommaList(dmaList) + ")"
+			isBigQuery = true
 		} else {
 			dmaRestriction = ""
 		}
@@ -261,11 +345,23 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 		if len(confidence) > 0 {
 			switch confidence[0] {
 			case "zero":
-				dataTable = "location.with_store_count"
+				if isBigQuery {
+					dataTable = "[altdatahub:placeiq_history.results_no_filter]"
+				} else {
+					dataTable = "location.brand_no_filter"
+				}
 			case "zero_point_two":
-				dataTable = "location.with_02_filter"
+				if isBigQuery {
+					dataTable = "[altdatahub:placeiq_history.results_020_filter]"
+				} else {
+					dataTable = "location.brand_020_filter"
+				}
 			default:
-				dataTable = "location.with_store_count"
+				if isBigQuery {
+					dataTable = "[altdatahub:placeiq_history.results_no_filter]"
+				} else {
+					dataTable = "location.brand_no_filter"
+				}
 			}
 		}
 
@@ -318,53 +414,50 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 	switch queryName {
 	case "Number of Visits":
 		if len(dmaList) > 0 {
-			query = `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, dma as subfield, sum(visit_count) as visit_count FROM ` + dataTable + `
-			` + movementSourceQuery + `
-			and brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction + dmaRestriction + `
-			group by local_date, brand, dma`
+			query = `SELECT a.date, a.brand, a.field, a.subfield, a.visit_count / b.` + normalization + ` as normalized_visit_count
+		FROM (SELECT local_date as date, brand, 'Number of Visits' as field, dma as subfield, sum(visit_count) as visit_count
+		FROM ` + dataTable + `
+					where movement_source = 'background'
+					and brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dmaRestriction + `
+					group by date, brand, subfield order by date) a JOIN [altdatahub:placeiq_history.factors] b on a.date = b.date
+		      `
+			isBigQuery = true
 		} else {
 			query = `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, "" as subfield, sum(visit_count) as visit_count FROM ` + dataTable + `
 			` + movementSourceQuery + `
-			and brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction + dmaRestriction + `
+			and brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction + `
 			group by local_date, brand`
+
+			query = `SELECT a.date, a.brand, a.field, a.subfield, a.visit_count / b.` + normalization + ` as normalized_visit_count FROM ( ` +
+				query +
+				`) a JOIN location.factors b on a.date = b.date `
 		}
-
-		query = `SELECT a.date, a.brand, a.field, a.subfield, a.visit_count / b.` + normalization + ` as normalized_visit_count FROM ( ` +
-			query +
-			`) a JOIN location.factors b on a.date = b.date `
-
-	case "Traffic By DMA":
-		query = `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, dma as subfield, sum(visit_count) as visit_count FROM ` + dataTable + `
-		` + movementSourceQuery + `
-		and brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction + `
-		group by local_date, brand, dma`
-
-		query = `SELECT a.date, a.subfield as brand, a.field, '' as subfield, a.visit_count / b.` + normalization + ` as normalized_visit_count FROM ( ` +
-			query +
-			`) a JOIN location.factors b on a.date = b.date `
 
 	case "Traffic Contribution":
 		dateRestriction = ` and local_date = (select max(local_date) from ` + dataTable + `) `
 
 		entityList := listOfStringsToQuotedCommaList(entities)
 
-		query1 := `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, dma as subfield, sum(visit_count) as visit_count FROM ` + dataTable + `
-		` + movementSourceQuery + `
-		and brand in (` + entityList + `) ` + dateRestriction + `
-		group by local_date, brand, dma`
+		query = `SELECT date_format(date, '%Y-%m-%d'), subfield, field, '', value
+			FROM location.traffic_contribution WHERE brand = ` + entityList
 
-		query2 := `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, '' as subfield, sum(visit_count) as visit_count FROM ` + dataTable + `
-		` + movementSourceQuery + `
-		and brand in (` + entityList + `) ` + dateRestriction + `
-		group by local_date, brand`
-
-		query = `SELECT a.date, a.subfield as brand, '% of Traffic' as field, '' as subfield, a.visit_count / b.visit_count as value
-			FROM (` +
-			query1 +
-			`) a LEFT JOIN
-			(` +
-			query2 +
-			`) b ON a.brand = b.brand `
+		// query1 := `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, dma as subfield, sum(visit_count) as visit_count FROM ` + dataTable + `
+		// ` + movementSourceQuery + `
+		// and brand in (` + entityList + `) ` + dateRestriction + `
+		// group by local_date, brand, dma`
+		//
+		// query2 := `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, '' as subfield, sum(visit_count) as visit_count FROM ` + dataTable + `
+		// ` + movementSourceQuery + `
+		// and brand in (` + entityList + `) ` + dateRestriction + `
+		// group by local_date, brand`
+		//
+		// query = `SELECT a.date, a.subfield as brand, '% of Traffic' as field, '' as subfield, a.visit_count / b.visit_count as value
+		// 	FROM (` +
+		// 	query1 +
+		// 	`) a LEFT JOIN
+		// 	(` +
+		// 	query2 +
+		// 	`) b ON a.brand = b.brand `
 
 	case "SSS Estimate":
 		query = `SELECT date_format(date, '%Y-%m-%d') as date, brand, 'SSS Estimate' as field, '' as subfield, sss FROM location.sss
@@ -399,7 +492,13 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 		return m
 	}
 
-	temp := GenericQuery(ctx, query, metaMap, " in ", isWeight)
+	var temp MultiEntityData
+
+	if isBigQuery {
+		temp = GenericBigQuery(ctx, query, metaMap, " in ", isWeight)
+	} else {
+		temp = GenericSQLQuery(ctx, query, metaMap, " in ", isWeight)
+	}
 	log.Infof(ctx, "time taken was %v\nentities = %s\nqueryName = %s\nparameters = %s\nstartDate = %s\nendDate = %s", time.Since(timer), entities, queryName, parameters, startDate, endDate)
 
 	return temp

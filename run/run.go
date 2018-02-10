@@ -3722,7 +3722,7 @@ func tsSampleEveryNumPeriods(number float64) func(SingleEntityData) SingleEntity
 				newData := make([]DataPoint, 0, len(d))
 
 				for i := 0; i < len(d); i++ {
-					if i%days == 0 {
+					if (i+1)%days == 0 {
 						newData = append(newData, d[i])
 					}
 				}

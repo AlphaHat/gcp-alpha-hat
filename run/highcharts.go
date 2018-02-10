@@ -329,7 +329,8 @@ func ConvertMultiEntityDataToHighcharts(m MultiEntityData, chartOptions ChartOpt
 
 	hc["chart"] = map[string]interface{}{
 		"type":      chartType,
-		"animation": isBlank(chartOptions),
+		"zoomType":  "xy",
+		"animation": true,
 	}
 
 	hc["xAxis"] = map[string]interface{}{

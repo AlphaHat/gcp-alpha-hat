@@ -43,7 +43,7 @@ func GetDetails(ctx context.Context, query string) TrackData {
 	_, err := memcache.Gob.Get(ctx, "track:"+query, &item0)
 
 	if err != nil {
-		log.Errorf(ctx, "track.GetDetails err = %s", err)
+		log.Infof(ctx, "track.GetDetails err = %s", err)
 	}
 
 	return item0
