@@ -157,7 +157,7 @@ func quandlConnect(columnName string) *cache.GenericCache {
 func getQuandlTimeSeriesFromDatabase(ctx context.Context, ticker string) (*timeseries.TimeSeries, error) {
 	var ts timeseries.TimeSeries
 
-	err := db.GetFromField(ctx, "quandl", "Name", ticker, &ts)
+	_, err := db.GetFromField(ctx, "quandl", "Name", ticker, &ts)
 
 	return &ts, err
 }

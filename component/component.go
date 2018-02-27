@@ -36,6 +36,7 @@ const (
 	OverrideData             = "Stock Data Estimates and Overrides"
 	FreeText                 = "Free Text"
 	RenameEntity             = "Rename Entity"
+	Ratio                    = "Ratio"
 )
 
 // Sources

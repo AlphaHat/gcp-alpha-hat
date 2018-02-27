@@ -854,6 +854,13 @@ var ComputationsSteps []ComputationStep = []ComputationStep{
 		ComputeFn:     WrapStringArgumentTS2(formulaToFunction),
 	},
 	ComputationStep{
+		Type:          component.Ratio,
+		Name:          "",
+		DefaultString: "",
+		ArgCheckFn:    verifyFreeText,
+		ComputeFn:     RatioData,
+	},
+	ComputationStep{
 		Type:          component.RemoveData,
 		Name:          "",
 		DefaultString: "",
@@ -1093,6 +1100,13 @@ var ComputationsSteps []ComputationStep = []ComputationStep{
 	},
 	ComputationStep{
 		Type:          component.TimeSeriesTransformation,
+		Name:          "Indexed to Beginning",
+		DefaultString: "Indexed to Beginning",
+		ArgCheckFn:    verifyNoArguments("Indexed to Beginning", "Indexed to Beginning"),
+		ComputeFn:     WrapNoArguments(ComputeTS(tsIndexedToBeginning())),
+	},
+	ComputationStep{
+		Type:          component.TimeSeriesTransformation,
 		Name:          "{Number}-Day Forward Return",
 		DefaultString: "30-Day Forward Return",
 		ArgCheckFn:    verifyNoArguments("{Number}-Day Forward Return", "30-Day Forward Return"),
@@ -1224,55 +1238,55 @@ var ComputationsSteps []ComputationStep = []ComputationStep{
 		ArgCheckFn:    verifyNoArguments("Number of Days Since < {Number}", "Number of Days Since < 5"),
 		ComputeFn:     WrapNumericalArgumentTS(tsDaysSinceDrop),
 	},
-	ComputationStep{
-		Type:          component.SameEntityAggregation,
-		Name:          "Spread",
-		DefaultString: "Spread",
-		ArgCheckFn:    verifyNoArguments("Spread", "Spread"),
-		ComputeFn:     WrapNoArguments(ComputeTS(spread)),
-	},
-	ComputationStep{
-		Type:          component.SameEntityAggregation,
-		Name:          "Ratio",
-		DefaultString: "Ratio",
-		ArgCheckFn:    verifyNoArguments("Ratio", "Ratio"),
-		ComputeFn:     WrapNoArguments(ComputeTS(ratio)),
-	},
-	ComputationStep{
-		Type:          component.SameEntityAggregation,
-		Name:          "Ratio",
-		DefaultString: "Ratio",
-		ArgCheckFn:    verifyNoArguments("Ratio", "Ratio"),
-		ComputeFn:     WrapNoArguments(ComputeTS(ratio)),
-	},
-	ComputationStep{
-		Type:          component.SameEntityAggregation,
-		Name:          "Divide Field {Number} By Field {Number}",
-		DefaultString: "Divide Field 1 By Field 2",
-		ArgCheckFn:    verifyNoArguments("Divide Field {Number} By Field {Number}", "Divide Field 1 By Field 2"),
-		ComputeFn:     WrapNumericalArgumentTS2(tsDividedBy),
-	},
-	ComputationStep{
-		Type:          component.SameEntityAggregation,
-		Name:          "Multiply Field {Number} By Field {Number}",
-		DefaultString: "Multiply Field 1 By Field 2",
-		ArgCheckFn:    verifyNoArguments("Multiply Field {Number} By Field {Number}", "Multiply Field 1 By Field 2"),
-		ComputeFn:     WrapNumericalArgumentTS2(tsMultiply),
-	},
-	ComputationStep{
-		Type:          component.SameEntityAggregation,
-		Name:          "Add Field {Number} And Field {Number}",
-		DefaultString: "Add Field 1 And Field 2",
-		ArgCheckFn:    verifyNoArguments("Add Field {Number} And Field {Number}", "Add Field 1 And Field 2"),
-		ComputeFn:     WrapNumericalArgumentTS2(tsAdd),
-	},
-	ComputationStep{
-		Type:          component.SameEntityAggregation,
-		Name:          "Subtract Field {Number} From Field {Number}",
-		DefaultString: "Subtract Field 1 From Field 2",
-		ArgCheckFn:    verifyNoArguments("Subtract Field {Number} From Field {Number}", "Subtract Field 1 From Field 2"),
-		ComputeFn:     WrapNumericalArgumentTS2(tsSubtract),
-	},
+	// ComputationStep{
+	// 	Type:          component.SameEntityAggregation,
+	// 	Name:          "Spread",
+	// 	DefaultString: "Spread",
+	// 	ArgCheckFn:    verifyNoArguments("Spread", "Spread"),
+	// 	ComputeFn:     WrapNoArguments(ComputeTS(spread)),
+	// },
+	// ComputationStep{
+	// 	Type:          component.SameEntityAggregation,
+	// 	Name:          "Ratio",
+	// 	DefaultString: "Ratio",
+	// 	ArgCheckFn:    verifyNoArguments("Ratio", "Ratio"),
+	// 	ComputeFn:     WrapNoArguments(ComputeTS(ratio)),
+	// },
+	// ComputationStep{
+	// 	Type:          component.SameEntityAggregation,
+	// 	Name:          "Ratio",
+	// 	DefaultString: "Ratio",
+	// 	ArgCheckFn:    verifyNoArguments("Ratio", "Ratio"),
+	// 	ComputeFn:     WrapNoArguments(ComputeTS(ratio)),
+	// },
+	// ComputationStep{
+	// 	Type:          component.SameEntityAggregation,
+	// 	Name:          "Divide Field {Number} By Field {Number}",
+	// 	DefaultString: "Divide Field 1 By Field 2",
+	// 	ArgCheckFn:    verifyNoArguments("Divide Field {Number} By Field {Number}", "Divide Field 1 By Field 2"),
+	// 	ComputeFn:     WrapNumericalArgumentTS2(tsDividedBy),
+	// },
+	// ComputationStep{
+	// 	Type:          component.SameEntityAggregation,
+	// 	Name:          "Multiply Field {Number} By Field {Number}",
+	// 	DefaultString: "Multiply Field 1 By Field 2",
+	// 	ArgCheckFn:    verifyNoArguments("Multiply Field {Number} By Field {Number}", "Multiply Field 1 By Field 2"),
+	// 	ComputeFn:     WrapNumericalArgumentTS2(tsMultiply),
+	// },
+	// ComputationStep{
+	// 	Type:          component.SameEntityAggregation,
+	// 	Name:          "Add Field {Number} And Field {Number}",
+	// 	DefaultString: "Add Field 1 And Field 2",
+	// 	ArgCheckFn:    verifyNoArguments("Add Field {Number} And Field {Number}", "Add Field 1 And Field 2"),
+	// 	ComputeFn:     WrapNumericalArgumentTS2(tsAdd),
+	// },
+	// ComputationStep{
+	// 	Type:          component.SameEntityAggregation,
+	// 	Name:          "Subtract Field {Number} From Field {Number}",
+	// 	DefaultString: "Subtract Field 1 From Field 2",
+	// 	ArgCheckFn:    verifyNoArguments("Subtract Field {Number} From Field {Number}", "Subtract Field 1 From Field 2"),
+	// 	ComputeFn:     WrapNumericalArgumentTS2(tsSubtract),
+	// },
 	ComputationStep{
 		Type:          component.CrossEntityAggregation,
 		Name:          "Sum",
@@ -1640,7 +1654,7 @@ func DataHandler(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	if query != "" && (details.Message == "" || details.PercentComplete >= 0.999) {
 		var m DataDummy
 
-		err := db.GetFromField(ctx, db.RunData, "RunId", query, &m)
+		_, err := db.GetFromField(ctx, db.RunData, "RunId", query, &m)
 
 		if err == nil && len(m.Data) > 0 {
 			// chartOptions := GetChartOptions(ctx, r.FormValue("options"))
@@ -1759,7 +1773,7 @@ func ExcelHandler(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	if hex != "" && (details.Message == "" || details.PercentComplete >= 0.999) {
 		var m DataDummy
 
-		err := db.GetFromField(ctx, db.RunData, "RunId", hex, &m)
+		_, err := db.GetFromField(ctx, db.RunData, "RunId", hex, &m)
 
 		if err == nil && len(m.Data) > 0 {
 
@@ -2159,6 +2173,22 @@ func cagr(m SeriesMeta, d []DataPoint, w []DataPoint) []DataPoint {
 	return []DataPoint{DataPoint{lastPoint.Time, data}}
 }
 
+func indexedToBeginning(m SeriesMeta, d []DataPoint, w []DataPoint) []DataPoint {
+	var newData []DataPoint
+
+	if len(d) > 0 {
+		newData = make([]DataPoint, 0, len(d))
+	} else {
+		return nil
+	}
+
+	for i, v := range d {
+		newData = append(newData, DataPoint{d[i].Time, (v.Data / d[0].Data) * 100})
+	}
+
+	return newData
+}
+
 func cumulativeChange(m SeriesMeta, d []DataPoint, w []DataPoint) []DataPoint {
 	var newData []DataPoint
 	var isEventStudy bool = false
@@ -2521,7 +2551,7 @@ func getQuarterlyDates(startDate time.Time, endDate time.Time) ([]time.Time, boo
 	beginIncomplete := beginIncompleteMonth
 	endIncomplete := endIncompleteMonth
 
-	if len(tArr) > 0 && (tArr[0].Month() != 1 && tArr[0].Month() != 4 && tArr[0].Month() != 8 && tArr[0].Month() != 11) {
+	if len(tArr) > 0 && (tArr[0].Month() != 1 && tArr[0].Month() != 4 && tArr[0].Month() != 7 && tArr[0].Month() != 10) {
 		beginIncomplete = true
 	}
 
@@ -3117,6 +3147,14 @@ func tsDifference() func(SingleEntityData) SingleEntityData {
 func tsCumulativeChange() func(SingleEntityData) SingleEntityData {
 	return func(s SingleEntityData) SingleEntityData {
 		s.Data = applyToSeries(s.Data, cumulativeChange, metaTransform(prependString("% Cumulative Change in "), replaceString("%Δ"), changeResampleType(ResampleLastValue), changeResampleType(ResampleLastValue)))
+
+		return s
+	}
+}
+
+func tsIndexedToBeginning() func(SingleEntityData) SingleEntityData {
+	return func(s SingleEntityData) SingleEntityData {
+		s.Data = applyToSeries(s.Data, indexedToBeginning, metaTransform(appendString(" Indexed to Beginning"), replaceString("Index Level"), noResampleChange, noResampleChange))
 
 		return s
 	}
@@ -4284,6 +4322,59 @@ func IntersectData(ctx context.Context, mArr []MultiEntityData) MultiEntityData 
 	}
 
 	return m
+}
+
+func RatioData(c []component.QueryComponent) StepFnType {
+	if len(c) > 0 {
+		namedEntity := c[0]
+
+		return func(ctx context.Context, mArr []MultiEntityData) MultiEntityData {
+			if len(mArr) < 1 {
+				return MultiEntityData{Error: "Not enough multi entity data"}
+			}
+
+			m := mArr[0]
+
+			var indexData Series
+
+			for i, _ := range m.EntityData {
+				if m.EntityData[i].Meta.Name == namedEntity.QueryComponentOriginalString {
+					if len(m.EntityData[i].Data) < 1 {
+						return MultiEntityData{Error: "Not enough data in the named entity data"}
+					}
+					indexData = m.EntityData[i].Data[0]
+				}
+			}
+
+			for j, s := range m.EntityData {
+				for i, _ := range s.Data {
+					if s.Data[i].IsWeight == true {
+						continue
+					}
+
+					s.Data[i] = runBinaryFunctionOnSeries(s.Data[i], indexData, getWeightSeries(s.Data),
+						func(a float64, b float64) float64 {
+							return a / b
+						},
+						metaTransformBinary(
+							func(s1, s2 string) string { return s1 + " relative to " + namedEntity.QueryComponentOriginalString },
+							func(s1, s2 string) string {
+								return "Ratio"
+							},
+						),
+					)
+				}
+
+				m.EntityData[j].Data = s.Data
+			}
+
+			return m
+		}
+	}
+
+	return func(ctx context.Context, mArr []MultiEntityData) MultiEntityData {
+		return MultiEntityData{Error: "No named entity specified"}
+	}
 }
 
 func DifferenceData(ctx context.Context, mArr []MultiEntityData) MultiEntityData {

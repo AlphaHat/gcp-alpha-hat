@@ -110,7 +110,7 @@ func ExtractQueryComponentExact(query string, terms *term.TermData, userTerms *t
 		}
 	}
 
-	return component.QueryComponent{QueryComponentCanonicalName: "No Results", QueryComponentType: "No Results", QueryComponentName: "No Results", QueryComponentOriginalString: "No Results"}
+	return component.QueryComponent{QueryComponentCanonicalName: query, QueryComponentType: "No Results", QueryComponentName: query, QueryComponentOriginalString: query}
 }
 
 // ParseParameters replaces things that looks like dates, numbers or percentages

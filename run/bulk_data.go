@@ -242,8 +242,9 @@ func GetSQLData(ctx context.Context, entities []string, queryName string, parame
 	source := parameters["Movement Source"]
 	confidence := parameters["Confidence Score"]
 	norm := parameters["Normalization"]
+	provider := parameters["Provider"]
 
-	iface, found := cache.Retrieve(ctx, queryName+":"+fmt.Sprintf("%s", entities)+":"+fmt.Sprintf("%s", dmaList)+":"+fmt.Sprintf("%s", source)+":"+fmt.Sprintf("%s", confidence)+":"+fmt.Sprintf("%s", norm))
+	iface, found := cache.Retrieve(ctx, queryName+":"+fmt.Sprintf("%s", provider)+":"+fmt.Sprintf("%s", entities)+":"+fmt.Sprintf("%s", dmaList)+":"+fmt.Sprintf("%s", source)+":"+fmt.Sprintf("%s", confidence)+":"+fmt.Sprintf("%s", norm))
 
 	if found {
 		switch m := iface.(type) {
@@ -336,8 +337,6 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 				movementSource = "foreground"
 			case "Background":
 				movementSource = "background"
-			default:
-				movementSource = "both"
 			}
 		}
 
@@ -346,21 +345,25 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 			switch confidence[0] {
 			case "zero":
 				if isBigQuery {
-					dataTable = "[altdatahub:placeiq_history.results_no_filter]"
+					dataTable = "[altdatahub:placeiq_history.uq_results_no_filter]"
 				} else {
-					dataTable = "location.brand_no_filter"
+					provider := parameters["Provider"]
+					if len(provider) > 0 {
+						switch provider[0] {
+						case "placeiq_gps":
+							dataTable = "location.brand_no_filter"
+						case "areametrics_bcn":
+							dataTable = "location.beacon"
+						}
+					} else {
+						dataTable = "location.brand_no_filter"
+					}
 				}
 			case "zero_point_two":
 				if isBigQuery {
-					dataTable = "[altdatahub:placeiq_history.results_020_filter]"
+					dataTable = "[altdatahub:placeiq_history.uq_results_020_filter]"
 				} else {
 					dataTable = "location.brand_020_filter"
-				}
-			default:
-				if isBigQuery {
-					dataTable = "[altdatahub:placeiq_history.results_no_filter]"
-				} else {
-					dataTable = "location.brand_no_filter"
 				}
 			}
 		}
@@ -380,22 +383,20 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 				}
 			case "alphahat_raw":
 				if movementSource == "foreground" {
-					normalization = "ah_fg*1000"
+					normalization = "ah_fg*1000000"
 				} else if movementSource == "background" {
-					normalization = "ah_bg*1000"
+					normalization = "ah_bg*1000000"
 				} else {
-					normalization = "ah_all*1000"
+					normalization = "ah_all*1000000"
 				}
 			case "alphahat_smoothed":
 				if movementSource == "foreground" {
-					normalization = "smoothed_fg*1000"
+					normalization = "smoothed_fg*1000000"
 				} else if movementSource == "background" {
-					normalization = "smoothed_bg*1000"
+					normalization = "smoothed_bg*1000000"
 				} else {
-					normalization = "smoothed_all*1000"
+					normalization = "smoothed_all*1000000"
 				}
-			default:
-				normalization = "raw"
 			}
 		}
 	}
@@ -417,7 +418,7 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 			query = `SELECT a.date, a.brand, a.field, a.subfield, a.visit_count / b.` + normalization + ` as normalized_visit_count
 		FROM (SELECT local_date as date, brand, 'Number of Visits' as field, dma as subfield, sum(visit_count) as visit_count
 		FROM ` + dataTable + `
-					where movement_source = 'background'
+					` + movementSourceQuery + `
 					and brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dmaRestriction + `
 					group by date, brand, subfield order by date) a JOIN [altdatahub:placeiq_history.factors] b on a.date = b.date
 		      `

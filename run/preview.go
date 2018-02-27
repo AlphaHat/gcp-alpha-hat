@@ -88,18 +88,18 @@ func (s Sheet) addRows(m MultiEntityData, isPreview bool) Sheet {
 	for i, v := range m.EntityData {
 		length := len(m.EntityData)
 		if !isPreview || (len(m.EntityData) <= MAX_COMPANIES_TO_DISPLAY || i < (MAX_COMPANIES_TO_DISPLAY/2) || i >= length-(MAX_COMPANIES_TO_DISPLAY/2)) {
-			s = append(s, s.rowHeader(v.Meta.Name, CellBold))
+			// s = append(s, s.rowHeader(v.Meta.Name, CellBold))
 
 			for _, v2 := range v.Data {
-				row := s.rowHeader(v2.Meta.Label, CellIndent)
+				row := s.rowHeader(v.Meta.Name+" - "+v2.Meta.Label, CellIndent)
 				row = matchDates(s[0], v.Meta, v2, row)
 				s = append(s, row)
 			}
-			if len(v.Category.Labels) > 0 {
-				row := s.rowHeader("Classification", CellIndent)
-				row = matchDatesForClassification(s[0], v.Category, row)
-				s = append(s, row)
-			}
+			// if len(v.Category.Labels) > 0 {
+			// 	row := s.rowHeader("Classification", CellIndent)
+			// 	row = matchDatesForClassification(s[0], v.Category, row)
+			// 	s = append(s, row)
+			// }
 		} else if i == int(MAX_COMPANIES_TO_DISPLAY/2) {
 			s = append(s, s.rowHeader("...", CellBold))
 		}
@@ -194,5 +194,15 @@ func convertMultiEntityDataToSheet(m MultiEntityData, isPreview bool) Sheet {
 	s = s.addDates(m, isPreview)
 	s = s.addRows(m, isPreview)
 
-	return s
+	transposed := make([][]SheetCell, len(s[0]))
+	for x, _ := range transposed {
+		transposed[x] = make([]SheetCell, len(s))
+	}
+	for y, v := range s {
+		for x, e := range v {
+			transposed[x][y] = e
+		}
+	}
+
+	return transposed
 }

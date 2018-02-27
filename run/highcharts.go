@@ -354,6 +354,8 @@ func ConvertMultiEntityDataToHighcharts(m MultiEntityData, chartOptions ChartOpt
 		hc = getScatterSeries(m, chartOptions, hc)
 	} else if chartType == "scatter" && isOneDay {
 		hc = getCrossEntityScatter(m, chartOptions, hc)
+	} else if chartType == "column" {
+		hc = getCategorySeriesTimeSeries(m, chartOptions, hc)
 	} else {
 		hc = getTimeSeries(m, chartOptions, hc)
 	}
@@ -560,6 +562,61 @@ func prettyLabel(d float64, seriesLabel string) string {
 		return fmt.Sprintf("%.1f %%", d*100)
 	}
 	return fmt.Sprintf("%.2f", d)
+}
+
+func getCategorySeriesTimeSeries(m MultiEntityData, chartOptions ChartOptions, hc map[string]interface{}) map[string]interface{} {
+	chartType, _, _ := getChartTypeAndXAxisType(m, chartOptions)
+
+	uniqueDates := m.UniqueDates()
+
+	categories := make([]string, len(uniqueDates))
+
+	for i, _ := range uniqueDates {
+		categories[i] = uniqueDates[i].Format("Jan 02 '06")
+	}
+
+	numFields := len(m.GetFields())
+
+	showUnits := numFields > 1
+
+	hc["series"] = make([]map[string]interface{}, 0, m.NumSeries())
+
+	var seriesNum int = 0
+
+	for _, v2 := range m.EntityData {
+		for _, v := range v2.Data {
+
+			var data []interface{} = make([]interface{}, len(v.Data), len(v.Data))
+
+			for i, d := range v.Data {
+				data[i] = d.Data
+			}
+
+			axisNum := getYAxisNum(m, v.Meta)
+
+			var suffix string
+			if showUnits {
+				suffix = " " + v.Meta.Label
+			}
+
+			seriesTemp := map[string]interface{}{
+				"name":  v2.Meta.Name + suffix,
+				"type":  chartType,
+				"data":  data,
+				"yAxis": axisNum,
+			}
+
+			hc["series"] = append(hc["series"].([]map[string]interface{}), seriesTemp)
+
+			seriesNum = seriesNum + 1
+		}
+	}
+
+	hc["xAxis"].(map[string]interface{})["categories"] = categories
+
+	hc["yAxis"] = getYAxisHighcharts(m, chartOptions)
+
+	return hc
 }
 
 func getCategorySeriesEntityFirst(m MultiEntityData, chartOptions ChartOptions, hc map[string]interface{}) map[string]interface{} {

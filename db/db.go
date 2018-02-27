@@ -101,18 +101,18 @@ func GetFromKey(ctx context.Context, keyString string, v interface{}) error {
 	return err
 }
 
-func GetFromField(ctx context.Context, tableName string, fieldName string, fieldValue string, v interface{}) error {
+func GetFromField(ctx context.Context, tableName string, fieldName string, fieldValue string, v interface{}) (*datastore.Key, error) {
 	query := datastore.NewQuery(tableName).Filter(fieldName+" =", fieldValue)
 
 	iter := query.Run(ctx)
 
-	_, err := iter.Next(v)
+	key, err := iter.Next(v)
 
 	if err == datastore.Done {
-		return nil
+		return key, nil
 	}
 
-	return err
+	return key, err
 }
 
 func GetAllFromField(ctx context.Context, tableName string, fieldName string, fieldValue string, v interface{}) error {
