@@ -761,6 +761,26 @@ func (s Series) GetDates() []time.Time {
 	return tArr
 }
 
+func intersectDates(a []time.Time, b []time.Time) []time.Time {
+	var uDates = make([]time.Time, 0, len(a))
+
+	var i, j int
+
+	for i < len(a) && j < len(b) {
+		if a[i].Equal(b[j]) {
+			uDates = append(uDates, a[i])
+			i++
+			j++
+		} else if a[i].Before(b[j]) {
+			i++
+		} else {
+			j++
+		}
+	}
+
+	return uDates
+}
+
 func unionDates(a []time.Time, b []time.Time) []time.Time {
 	var uDates = make([]time.Time, 0, len(a)+len(b))
 
@@ -809,6 +829,20 @@ func (m MultiEntityData) UniqueDates() []time.Time {
 	}
 
 	return uniqueDates
+}
+
+func (m MultiEntityData) IntersectingDates() []time.Time {
+	intersectingDates := m.UniqueDates()
+
+	for _, v := range m.EntityData {
+		for _, v2 := range v.Data {
+			if !v2.IsWeight {
+				intersectingDates = intersectDates(intersectingDates, v2.GetDates())
+			}
+		}
+	}
+
+	return intersectingDates
 }
 
 func (m MultiEntityData) Summarize() string {
@@ -1125,6 +1159,13 @@ var ComputationsSteps []ComputationStep = []ComputationStep{
 		DefaultString: "Sample Every 7 Periods",
 		ArgCheckFn:    verifyNoArguments("Sample Every {Number} Periods", "Sample Every 7 Periods"),
 		ComputeFn:     WrapNumericalArgumentTS(tsSampleEveryNumPeriods),
+	},
+	ComputationStep{
+		Type:          component.TimeSeriesTransformation,
+		Name:          "Resample To Lowest Frequency",
+		DefaultString: "Resample To Lowest Frequency",
+		ArgCheckFn:    verifyNoArguments("Resample To Lowest Frequency", "Resample To Lowest Frequency"),
+		ComputeFn:     WrapNoArguments(ResampleToLowestFrequency),
 	},
 	ComputationStep{
 		Type:          component.TimeSeriesTransformation,
@@ -1713,9 +1754,11 @@ func RawHandler(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 		// db.GetFromKey(ctx, query, &m)
 		db.GetFromField(ctx, db.RunData, "RunId", query, &m)
 
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, "%s\n", m.Data)
 	} else {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, "%s\n", track.GetData(ctx, query))
 	}
@@ -4324,6 +4367,148 @@ func IntersectData(ctx context.Context, mArr []MultiEntityData) MultiEntityData 
 	return m
 }
 
+//func isBeginEndIncomplete(ctx context.Context, datesForResample []time.Time) (bool, bool) {
+//	beginIncomplete := false
+//	endIncomplete := false
+//
+//	var distances []time.Duration = make([]time.Duration, 0)
+//
+//	for i, _ := range datesForResample {
+//		if i > 0 {
+//			distances = append(distances, datesForResample[i].Sub(datesForResample[i-1]))
+//		}
+//	}
+//
+//	log.Debugf(ctx, "\n\n\ndistances = %s\n\n\n", distances)
+//
+//	var maxDistance time.Duration
+//
+//	for _, v := range distances {
+//		if v > maxDistance {
+//			maxDistance = v
+//		}
+//	}
+//
+//	if len(distances) > 0 {
+//		if maxDistance - distances[0] > 5 {
+//			beginIncomplete = true
+//		}
+//
+//		if maxDistance - distances[len(distances)-1] > 5 {
+//			endIncomplete = true
+//		}
+//	}
+//
+//	return beginIncomplete, endIncomplete
+//}
+
+func getMaxDistance(datesForResample []time.Time) time.Duration {
+	var distances []time.Duration = make([]time.Duration, 0)
+
+	for i, _ := range datesForResample {
+		if i > 0 {
+			distances = append(distances, datesForResample[i].Sub(datesForResample[i-1]))
+		}
+	}
+
+	var maxDistance time.Duration
+
+	for _, v := range distances {
+		if v > maxDistance {
+			maxDistance = v
+		}
+	}
+
+	return maxDistance
+}
+
+func ResampleToLowestFrequency(ctx context.Context, mArr []MultiEntityData) MultiEntityData {
+	// Loop through and find the series with the lowest frequency
+
+	var datesForResample []time.Time = make([]time.Time, 0)
+
+	for _, v := range mArr {
+		for _, v2 := range v.EntityData {
+			for _, v3 := range v2.Data {
+				temp := v3.GetDates()
+
+				if len(datesForResample) == 0 || len(temp) < len(datesForResample) {
+					datesForResample = temp
+				}
+
+			}
+		}
+	}
+
+	// log.Infof(ctx, "datesForResample = %s", datesForResample)
+
+	// maxDistance := getMaxDistance(datesForResample)
+
+	// log.Infof(ctx, "maxDistance = %s", maxDistance)
+
+	minResampler := func(m SeriesMeta, d []DataPoint, _ []DataPoint) []DataPoint {
+		newData := make([]DataPoint, 0)
+		var newPoints []DataPoint
+		var newWeights []DataPoint
+
+		w := make([]DataPoint, len(d))
+
+		for i, _ := range d {
+			w[i] = d[i]
+			w[i].Data = 1
+		}
+
+		isArithmeticOrGeometric := (m.Downsample == ResampleArithmetic || m.Downsample == ResampleGeometric)
+
+		for i, v := range datesForResample {
+
+			if i == 0 {
+				newPoints = resampleChunk(time.Time{}, v, d, m)
+				newWeights = resampleChunk(time.Time{}, v, w, m)
+			} else {
+				newPoints = resampleChunk(datesForResample[i-1], v, d, m)
+				newWeights = resampleChunk(datesForResample[i-1], v, w, m)
+			}
+
+			// log.Debugf(ctx, "v = %s, newPoints = %s\n", v, newPoints)
+			if len(newPoints) > 0 && len(newWeights) > 0 && newWeights[len(newWeights)-1].Data != 0 {
+				if isArithmeticOrGeometric {
+					if i > 0 {
+						distance := datesForResample[i].Sub(datesForResample[i-1])
+
+						if (float64(distance/(time.Hour*24)) / newWeights[0].Data) < 1.05 {
+							newData = append(newData, newPoints...)
+						} else {
+							// log.Debugf(ctx, "Dropping point newPoints = %s , newWeights = %s, maxDistance = %v \n\n\n", newPoints, newWeights, maxDistance/(time.Hour*24))
+						}
+					}
+				} else {
+					newData = append(newData, newPoints...)
+				}
+			}
+		}
+
+		return newData
+
+	}
+
+	resampleFunc := func(_ time.Time) func(s SingleEntityData) SingleEntityData {
+		return func(s SingleEntityData) SingleEntityData {
+			s.Data = applyToSeries(s.Data, minResampler, metaTransform(noStringChange, noStringChange, noResampleChange, noResampleChange))
+
+			return s
+		}
+	}
+
+	m := AlignCalendar(resampleFunc)(ctx, mArr)
+
+	intersectingDates := m.IntersectingDates()
+
+	// log.Infof(ctx, "intersectingDates = %s", intersectingDates)
+
+	return alignDataPoints(intersectingDates, m)
+}
+
 func RatioData(c []component.QueryComponent) StepFnType {
 	if len(c) > 0 {
 		namedEntity := c[0]
@@ -4334,19 +4519,24 @@ func RatioData(c []component.QueryComponent) StepFnType {
 			}
 
 			m := mArr[0]
+			mCopy := m.Duplicate()
 
 			var indexData Series
 
-			for i, _ := range m.EntityData {
+			mCopy.EntityData = make([]SingleEntityData, 0)
+
+			for i, v := range m.EntityData {
 				if m.EntityData[i].Meta.Name == namedEntity.QueryComponentOriginalString {
 					if len(m.EntityData[i].Data) < 1 {
 						return MultiEntityData{Error: "Not enough data in the named entity data"}
 					}
 					indexData = m.EntityData[i].Data[0]
+				} else {
+					mCopy.EntityData = append(mCopy.EntityData, v)
 				}
 			}
 
-			for j, s := range m.EntityData {
+			for j, s := range mCopy.EntityData {
 				for i, _ := range s.Data {
 					if s.Data[i].IsWeight == true {
 						continue
@@ -4365,10 +4555,10 @@ func RatioData(c []component.QueryComponent) StepFnType {
 					)
 				}
 
-				m.EntityData[j].Data = s.Data
+				mCopy.EntityData[j].Data = s.Data
 			}
 
-			return m
+			return mCopy
 		}
 	}
 

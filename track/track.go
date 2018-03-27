@@ -31,6 +31,8 @@ func GetData(ctx context.Context, query string) []byte {
 
 	if err != nil {
 		log.Errorf(ctx, "track.GetData err = %s", err)
+	} else {
+		log.Infof(ctx, "track.GetData cache hit on track:"+query)
 	}
 
 	m, _ := json.Marshal(item0)
@@ -44,6 +46,8 @@ func GetDetails(ctx context.Context, query string) TrackData {
 
 	if err != nil {
 		log.Infof(ctx, "track.GetDetails err = %s", err)
+	} else {
+		log.Infof(ctx, "track.GetDetails cache hit on track:"+query)
 	}
 
 	return item0

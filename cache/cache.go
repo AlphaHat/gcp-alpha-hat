@@ -3,6 +3,8 @@ package cache
 import (
 	// "fmt"
 	"context"
+	"fmt"
+	"hash/fnv"
 	"sync"
 	"time"
 
@@ -35,9 +37,16 @@ func NewGenericCache(timeout time.Duration, keyType string, missFunction CacheMi
 	return c
 }
 
+func hash(key string) string {
+	first := fnv.New32()
+	first.Write([]byte(key))
+
+	return fmt.Sprintf("%x", first.Sum(nil))
+}
+
 func (c *GenericCache) store(ctx context.Context, key string, value interface{}) {
 	item := &memcache.Item{
-		Key: c.keyType + ":" + key,
+		Key: c.keyType + ":" + hash(key),
 		Object: CacheObject{
 			LastUpdated: time.Now(),
 			Value:       value,
@@ -46,21 +55,24 @@ func (c *GenericCache) store(ctx context.Context, key string, value interface{})
 	err := memcache.Gob.Set(ctx, item)
 	if err != nil {
 		log.Infof(ctx, "Error adding err = %s", err)
+	} else {
+		log.Infof(ctx, "Storing cache key "+c.keyType+":"+hash(key))
 	}
 }
 
 func (c *GenericCache) Retrieve(ctx context.Context, key string) (interface{}, bool) {
 	// log.Infof(c.ctx, "Retrieving from memcache")
 	var item0 CacheObject
-	_, err := memcache.Gob.Get(ctx, c.keyType+":"+key, &item0)
+	_, err := memcache.Gob.Get(ctx, c.keyType+":"+hash(key), &item0)
 	if err == nil {
 		if time.Since(item0.LastUpdated) < c.timeout {
 			return item0.Value, true
 		}
+		log.Infof(ctx, "cache expired for "+c.keyType+":"+hash(key))
 	} else {
-		// log.Infof(c.ctx, "cache err = %s", err)
+		log.Infof(ctx, "cache Retrieve "+c.keyType+":"+hash(key)+" err = %s", err)
 	}
-	// log.Infof(c.ctx, "Using miss Function")
+	log.Infof(ctx, "Using miss Function")
 
 	dataFound, found := c.missFunction(ctx, key)
 	c.store(ctx, key, dataFound)

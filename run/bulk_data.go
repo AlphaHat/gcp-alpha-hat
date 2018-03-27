@@ -320,6 +320,7 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 	var dmaList []string
 	var normalization string = "raw"
 	var movementSource string = "both"
+	var movementSourceKey string = "all"
 	var dataTable string = "location.brand_no_filter"
 	if parameters != nil {
 		dmaList = parameters["DMA"]
@@ -337,6 +338,15 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 				movementSource = "foreground"
 			case "Background":
 				movementSource = "background"
+			case "Background149":
+				movementSource = "background"
+				movementSourceKey = "149"
+			case "Background231":
+				movementSource = "background"
+				movementSourceKey = "231"
+			case "Background305":
+				movementSource = "background"
+				movementSourceKey = "305"
 			}
 		}
 
@@ -345,13 +355,15 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 			switch confidence[0] {
 			case "zero":
 				if isBigQuery {
-					dataTable = "[altdatahub:placeiq_history.uq_results_no_filter]"
+					dataTable = "[altdatahub:placeiq_daily.uq_results_no_filter]"
 				} else {
 					provider := parameters["Provider"]
 					if len(provider) > 0 {
 						switch provider[0] {
 						case "placeiq_gps":
 							dataTable = "location.brand_no_filter"
+						case "placeiq_gps_updated":
+							dataTable = "location.brand_no_filter_update"
 						case "areametrics_bcn":
 							dataTable = "location.beacon"
 						}
@@ -405,7 +417,11 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 	if movementSource == "foreground" {
 		movementSourceQuery = `where movement_source = 'foreground'`
 	} else if movementSource == "background" {
-		movementSourceQuery = `where movement_source = 'background'`
+		if movementSourceKey != "all" {
+			movementSourceQuery = `where movement_source_key = ` + movementSourceKey
+		} else {
+			movementSourceQuery = `where movement_source = 'background'`
+		}
 	} else {
 		movementSourceQuery = `where movement_source in ('background', 'foreground')`
 	}
@@ -420,7 +436,8 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 		FROM ` + dataTable + `
 					` + movementSourceQuery + `
 					and brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dmaRestriction + `
-					group by date, brand, subfield order by date) a JOIN [altdatahub:placeiq_history.factors] b on a.date = b.date
+					group by date, brand, subfield order by date) a JOIN [altdatahub:placeiq_daily.factors] b on a.date = b.date
+					ORDER BY a.date
 		      `
 			isBigQuery = true
 		} else {
@@ -439,8 +456,29 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 
 		entityList := listOfStringsToQuotedCommaList(entities)
 
-		query = `SELECT date_format(date, '%Y-%m-%d'), subfield, field, '', value
-			FROM location.traffic_contribution WHERE brand = ` + entityList
+		query = `SELECT a.local_date, a.subfield, '% of Traffic', a.brand, a.value/b.brand_total as pct_of_total
+FROM
+(
+SELECT date_format(date, '%Y-%m-%d') as local_date, brand, subfield, value
+			FROM location.traffic_contribution WHERE brand in (` + entityList + `)
+) a
+JOIN
+(
+SELECT date_format(date, '%Y-%m-%d') as local_date, brand, sum(value) as brand_total
+			FROM location.traffic_contribution WHERE brand in (` + entityList + `)
+            GROUP BY date, brand
+) b
+ON a.brand = b.brand AND a.local_date = b.local_date
+JOIN
+(
+SELECT date_format(date, '%Y-%m-%d') as local_date, subfield, sum(value) as dma_total
+			FROM location.traffic_contribution WHERE brand in (` + entityList + `)
+            GROUP BY date, subfield
+            ORDER BY dma_total desc
+            LIMIT 15
+) c
+ON a.local_date = c.local_date AND a.subfield = c.subfield
+ORDER BY dma_total desc`
 
 		// query1 := `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, dma as subfield, sum(visit_count) as visit_count FROM ` + dataTable + `
 		// ` + movementSourceQuery + `

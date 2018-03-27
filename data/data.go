@@ -17,6 +17,7 @@ import (
 	"github.com/AlphaHat/gcp-alpha-hat/timeseries"
 
 	"google.golang.org/appengine/log"
+	"reflect"
 )
 
 func extractTickerFromUniverseMember(universeMember component.QueryComponent) (string, error) {
@@ -100,7 +101,7 @@ func GetQuandlDataFull(ctx context.Context, ticker string, seriesName string) *t
 		return &t
 	}
 
-	log.Infof(ctx, "%s not a timeseries", ticker)
+	log.Errorf(ctx, "%s not a timeseries. It is a %s", ticker, reflect.TypeOf(tsRaw).Name())
 
 	return nil
 }
@@ -108,14 +109,14 @@ func GetQuandlDataFull(ctx context.Context, ticker string, seriesName string) *t
 func quandlConnect(columnName string) *cache.GenericCache {
 	quandl.SetAuthToken(os.Getenv("QUANDL_KEY"))
 
-	c := cache.NewGenericCache(time.Hour, "quandl", func(ctx context.Context, ticker string) (interface{}, bool) {
-		log.Infof(ctx, "Cache miss")
+	c := cache.NewGenericCache(time.Hour*8, "quandl", func(ctx context.Context, ticker string) (interface{}, bool) {
+		log.Infof(ctx, "Quandl cache miss %s", ticker)
 
-		ts, err := getQuandlTimeSeriesFromDatabase(ctx, ticker)
-
-		if err == nil && ts.Len() > 0 {
-			return ts, true
-		}
+		//ts, err := getQuandlTimeSeriesFromDatabase(ctx, ticker)
+		//
+		//if err == nil && ts.Len() > 0 {
+		//	return *ts, true
+		//}
 
 		q, err := quandl.GetAllHistory(ctx, ticker)
 

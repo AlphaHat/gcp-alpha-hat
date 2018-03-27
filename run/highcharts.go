@@ -318,9 +318,9 @@ func ConvertMultiEntityDataToHighcharts(m MultiEntityData, chartOptions ChartOpt
 	hc["title"] = map[string]interface{}{"text": getTitle(m, chartOptions)}
 
 	hc["credits"] = map[string]interface{}{
-		"text":    "Source: " + getMergedSource(m), // "Data through " + getDataEnd(m) + ".
-		"enabled": false,
-		"href":    "http://www.quandl.com",
+		"text":    "Source: Alpha Hat", // + getMergedSource(m),
+		"enabled": true,
+		// "href":    "http://www.quandl.com",
 	}
 
 	// Set the type
@@ -382,6 +382,18 @@ func overridePlotOptions(chartOptions ChartOptions, hc map[string]interface{}) m
 	}
 
 	series["animation"] = isBlank(chartOptions)
+
+	showMarker := false
+
+	for _, v := range chartOptions.SeriesOptions {
+		if v.MarkerSize != "" {
+			showMarker = true
+		}
+	}
+
+	series["marker"] = map[string]interface{}{
+		"enabled": showMarker,
+	}
 
 	plotOptions["series"] = series
 
@@ -586,10 +598,11 @@ func getCategorySeriesTimeSeries(m MultiEntityData, chartOptions ChartOptions, h
 	for _, v2 := range m.EntityData {
 		for _, v := range v2.Data {
 
-			var data []interface{} = make([]interface{}, len(v.Data), len(v.Data))
+			var data []interface{} = make([]interface{}, len(uniqueDates), len(uniqueDates))
 
-			for i, d := range v.Data {
-				data[i] = d.Data
+			for i, _ := range uniqueDates {
+				dataFound, _ := v.Find(uniqueDates[i])
+					data[i] = dataFound.Data
 			}
 
 			axisNum := getYAxisNum(m, v.Meta)

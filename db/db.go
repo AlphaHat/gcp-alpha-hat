@@ -126,3 +126,15 @@ func GetAllFromField(ctx context.Context, tableName string, fieldName string, fi
 
 	return err
 }
+
+func GetAll(ctx context.Context, tableName string, v interface{}) error {
+	query := datastore.NewQuery(tableName).Limit(100)
+
+	_, err := query.GetAll(ctx, v)
+
+	if err == datastore.Done {
+		return nil
+	}
+
+	return err
+}
