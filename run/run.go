@@ -451,6 +451,10 @@ func (e ExecutionNode) Execute(ctx context.Context, id string, Title string) Mul
 		med.Title = Title
 	}
 
+	log.Debugf(ctx, "entities = %q", med.GetAllEntityNames())
+	log.Debugf(ctx, "fields = %q", med.GetAllFieldNames())
+	log.Debugf(ctx, "num dates = %v", med.NumDates())
+
 	return med
 }
 
@@ -508,6 +512,28 @@ func (m MultiEntityData) GetFields() []string {
 	}
 
 	sort.Strings(fields)
+
+	return fields
+}
+
+func (m MultiEntityData) GetAllEntityNames() []string {
+	entities := make([]string, 0)
+
+	for _, v := range m.EntityData {
+		entities = append(entities, v.Meta.Name)
+	}
+
+	return entities
+}
+
+func (m MultiEntityData) GetAllFieldNames() []string {
+	fields := make([]string, 0)
+
+	for _, v := range m.EntityData {
+		for _, v2 := range v.Data {
+			fields = append(fields, v2.Meta.Label)
+		}
+	}
 
 	return fields
 }
@@ -1593,31 +1619,25 @@ func RunHandlerNoDecoder(ctx context.Context, w http.ResponseWriter, r *http.Req
 }
 
 func ReRunHandler(ctx context.Context, w http.ResponseWriter, r *http.Request, query string) {
+	var m DataDummy
 
-	type Dummy struct {
-		Tree ExecutionNode `bson:"tree"`
+	key, err := db.GetFromField(ctx, db.RunData, "RunId", query, &m)
+
+	if logError(ctx, err) && key != nil {
+		db.DatabaseDelete(ctx, key.Encode())
+	} else {
+		log.Errorf(ctx, "No key for %s", query)
 	}
 
-	var m Dummy
-
-	db.GetFromKey(ctx, query, &m)
-
-	go func(id string) {
-		// defer func() {
-		// 	if r := recover(); r != nil {
-		// 		track.Update(id, "Error", 0)
-		// 		zlog.LogRecovery(r)
-		// 	}
-		// }()
-		track.Update(ctx, id, "Running", 0)
-		med := m.Tree.Execute(ctx, id, "")
-		db.DatabaseInsert(ctx, db.RunData, &med, "")
-		track.Update(ctx, id, "Completed", 1)
-		//push.PushMessage("Completed: " + med.Title)
-		//m, _ := json.Marshal(ConvertMultiEntityDataToHighcharts(med))
-	}(query)
-
-	http.Redirect(w, r, "/render/"+query, http.StatusTemporaryRedirect)
+	t := taskqueue.NewPOSTTask("/apiv1/worker", map[string][]string{"id": {query}})
+	if t.RetryOptions == nil {
+		t.RetryOptions = &taskqueue.RetryOptions{}
+	}
+	t.RetryOptions.RetryLimit = 2
+	if _, err := taskqueue.Add(ctx, t, ""); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 // var laterFunc = delay.Func("key")
@@ -4628,7 +4648,8 @@ func UnionData(ctx context.Context, mArr []MultiEntityData) MultiEntityData {
 					m.EntityData[ix].Data = append(m.EntityData[ix].Data, v2)
 				}
 			}
-			m.EntityData[ix] = unionWeights(m.EntityData[ix], v)
+			// log.Debugf(ctx, "\n\n\nunionWeights\n\n\n")
+			m.EntityData[ix] = unionWeights(ctx, m.EntityData[ix], v)
 		}
 	}
 
@@ -4718,36 +4739,69 @@ func intersectWeights(e1 SingleEntityData, e2 SingleEntityData) SingleEntityData
 	return e1
 }
 
-func unionWeights(e1 SingleEntityData, e2 SingleEntityData) SingleEntityData {
+func unionWeights(ctx context.Context, e1 SingleEntityData, e2 SingleEntityData) SingleEntityData {
 	w1Ix, w2Ix := findWeightIndices(e1, e2)
 
 	if w1Ix < 0 || w2Ix < 0 {
 		return e1
 	}
 
+	// m1, _ := json.Marshal(e1.Data[w1Ix])
+	// m2, _ := json.Marshal(e2.Data[w2Ix])
 	e1.Data[w1Ix] = intersperseWeights(e1.Data[w1Ix], e2.Data[w2Ix])
+
+	// m3, _ := json.Marshal(e1.Data[w1Ix])
+	// log.Debugf(ctx, "\nweight1 = %s\nweight2 = %s\nweight3 = %s\n", m1, m2, m3)
 
 	return e1
 }
 
 func intersperseWeights(w1 Series, w2 Series) Series {
-	return runBinaryFunctionOnSeries(
-		w1,
-		w2,
-		weightStub(zeroDay()),
-		func(a float64, b float64) float64 {
-			if a != 0 {
-				return a
-			}
-			if b != 0 {
-				return b
-			}
-			return 0
-		},
-		func(a SeriesMeta, b SeriesMeta) SeriesMeta {
-			return a
-		},
-	)
+	newData := make([]DataPoint, 0)
+
+	i, j := 0, 0
+	for i < len(w1.Data) && j < len(w2.Data) {
+		if w1.Data[i].Time.Equal(w2.Data[j].Time) {
+			newData = append(newData, DataPoint{w1.Data[i].Time, w1.Data[i].Data + w2.Data[j].Data})
+			i++
+			j++
+		} else if w1.Data[i].Time.Before(w2.Data[j].Time) {
+			newData = append(newData, DataPoint{w1.Data[i].Time, w1.Data[i].Data})
+			i++
+		} else {
+			newData = append(newData, DataPoint{w2.Data[j].Time, w2.Data[j].Data})
+			j++
+		}
+	}
+
+	for ; i < len(w1.Data); i++ {
+		newData = append(newData, DataPoint{w1.Data[i].Time, w1.Data[i].Data})
+	}
+
+	for ; j < len(w2.Data); j++ {
+		newData = append(newData, DataPoint{w2.Data[j].Time, w2.Data[j].Data})
+	}
+
+	w1.Data = newData
+	return w1
+
+	// return runBinaryFunctionOnSeries(
+	// 	w1,
+	// 	w2,
+	// 	weightStub(zeroDay()),
+	// 	func(a float64, b float64) float64 {
+	// 		if a != 0 {
+	// 			return a
+	// 		}
+	// 		if b != 0 {
+	// 			return b
+	// 		}
+	// 		return 0
+	// 	},
+	// 	func(a SeriesMeta, b SeriesMeta) SeriesMeta {
+	// 		return a
+	// 	},
+	// )
 }
 
 func indexOfEntity(e EntityMeta, m MultiEntityData) int {
