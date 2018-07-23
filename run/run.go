@@ -1167,6 +1167,20 @@ var ComputationsSteps []ComputationStep = []ComputationStep{
 	},
 	ComputationStep{
 		Type:          component.TimeSeriesTransformation,
+		Name:          "Indexed to Average of First {Number} Days",
+		DefaultString: "Indexed to Average of First 7 Days",
+		ArgCheckFn:    verifyNoArguments("Indexed to Average of First {Number} Days", "Indexed to Average of First 7 Days"),
+		ComputeFn:     WrapNumericalArgumentTS(tsAverageOfFirstDays),
+	},
+	ComputationStep{
+		Type:          component.TimeSeriesTransformation,
+		Name:          "Indexed to Median of First {Number} Days",
+		DefaultString: "Indexed to Median of First 7 Days",
+		ArgCheckFn:    verifyNoArguments("Indexed to Median of First {Number} Days", "Indexed to Median of First 7 Days"),
+		ComputeFn:     medianOfFirstDays,
+	},
+	ComputationStep{
+		Type:          component.TimeSeriesTransformation,
 		Name:          "{Number}-Day Forward Return",
 		DefaultString: "30-Day Forward Return",
 		ArgCheckFn:    verifyNoArguments("{Number}-Day Forward Return", "30-Day Forward Return"),
@@ -3835,6 +3849,117 @@ func tsSampleEveryNumPeriods(number float64) func(SingleEntityData) SingleEntity
 			})
 
 		return s
+	}
+}
+
+func tsAverageOfFirstDays(number float64) func(SingleEntityData) SingleEntityData {
+	days := int(number)
+
+	return func(s SingleEntityData) SingleEntityData {
+		s.Data = applyToSeries(s.Data,
+			func(m SeriesMeta, d []DataPoint, w []DataPoint) []DataPoint {
+				var newData []DataPoint
+				var startingPoint float64
+
+				if len(d) > days {
+					newData = make([]DataPoint, 0, len(d))
+					for i := 0; i < days; i++ {
+						startingPoint = startingPoint + d[i].Data
+					}
+					startingPoint = startingPoint / float64(days)
+				} else {
+					return nil
+				}
+
+				for i, v := range d {
+					newData = append(newData, DataPoint{d[i].Time, (v.Data / startingPoint) * 100})
+				}
+
+				return newData
+			},
+			func(m SeriesMeta) SeriesMeta {
+				m.Label = fmt.Sprintf("Indexed to Avg of %v Days Before Period", days)
+				m.Units = "Index Level"
+
+				return m
+			})
+
+		return s
+	}
+}
+
+func medianOfFirstDays(c []component.QueryComponent) StepFnType {
+	number := convertParameterToFloat(c[0])
+	days := int(number)
+
+	firstDataPoints0 := make([]float64, days)
+	firstDataPoints1 := make([]float64, days)
+	percentageDiff := make([]float64, days)
+	percentageDiffSorted := make([]float64, days)
+	var date0, date1 string
+
+	return func(ctx context.Context, mArr []MultiEntityData) MultiEntityData {
+		m := mArr[0]
+
+		if len(m.EntityData) < 2 {
+			return m
+		}
+
+		if len(m.EntityData[0].Data) < 1 || len(m.EntityData[1].Data) < 1 {
+			return m
+		}
+
+		for i := 0; i < days; i++ {
+			firstDataPoints0[i] = m.EntityData[0].Data[0].Data[i].Data
+			firstDataPoints1[i] = m.EntityData[1].Data[0].Data[i].Data
+			percentageDiff[i] = firstDataPoints0[i]/firstDataPoints1[i] - 1
+			percentageDiffSorted[i] = percentageDiff[i]
+		}
+
+		sort.Float64s(percentageDiffSorted)
+		medianPercentDiff := percentageDiffSorted[int(days/2)]
+
+		var minDiffIndex int
+		for j, v := range percentageDiff {
+			if v == medianPercentDiff {
+				minDiffIndex = j
+			}
+		}
+
+		date0 = m.EntityData[0].Data[0].Data[minDiffIndex].Time.String()[0:10]
+		date1 = m.EntityData[1].Data[0].Data[minDiffIndex].Time.String()[0:10]
+
+		for i, v := range m.EntityData {
+			m.EntityData[i] = func(s SingleEntityData) SingleEntityData {
+
+				s.Data = applyToSeries(s.Data,
+					func(m SeriesMeta, d []DataPoint, w []DataPoint) []DataPoint {
+						var newData []DataPoint
+
+						for i, v := range d {
+							if i >= days {
+								newData = append(newData, DataPoint{d[i].Time, (v.Data / d[minDiffIndex].Data) * 100})
+							}
+						}
+
+						return newData
+					},
+					func(m SeriesMeta) SeriesMeta {
+						if i == 0 {
+							m.Label = "Indexed to " + date0
+						} else {
+							m.Label = "Indexed to " + date1
+						}
+						m.Units = "Index Level"
+
+						return m
+					})
+
+				return s
+			}(v)
+		}
+
+		return m
 	}
 }
 

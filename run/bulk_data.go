@@ -232,20 +232,28 @@ func listOfStringsToQuotedCommaList(entities []string) string {
 }
 
 func GetSQLData(ctx context.Context, entities []string, queryName string, parameters map[string][]string, startDate time.Time, endDate time.Time) MultiEntityData {
-	cache := cache.NewGenericCache(
-		time.Hour*24,
-		"SQLData",
-		func(ctx context.Context, key string) (interface{}, bool) {
-			return GetSQLDataLive(ctx, entities, queryName, parameters, startDate, endDate), true
-		})
-
 	dmaList := parameters["DMA"]
 	source := parameters["Movement Source"]
 	normalizationOrder := parameters["Normalization Order"]
 	norm := parameters["Normalization"]
 	smoothing := parameters["Smoothing"]
+	bySource := parameters["By Source"]
+	sameStores := parameters["Same Stores"]
 
-	iface, found := cache.Retrieve(ctx, queryName+":"+fmt.Sprintf("%s", smoothing)+":"+fmt.Sprintf("%s", entities)+":"+fmt.Sprintf("%s", dmaList)+":"+fmt.Sprintf("%s", source)+":"+fmt.Sprintf("%s", normalizationOrder)+":"+fmt.Sprintf("%s", norm))
+	if len(parameters["Provider"]) > 0 {
+		norm = []string{"alphahat_nobasket"}
+		smoothing = []string{"smoothed"}
+		normalizationOrder = []string{"normalize_then_add"}
+	}
+
+	cache := cache.NewGenericCache(
+		time.Hour*24,
+		"SQLData",
+		func(ctx context.Context, key string) (interface{}, bool) {
+			return GetSQLDataLive(ctx, entities, queryName, dmaList, source, normalizationOrder, norm, smoothing, bySource, sameStores, startDate, endDate), true
+		})
+
+	iface, found := cache.Retrieve(ctx, queryName+":"+fmt.Sprintf("%s", smoothing)+":"+fmt.Sprintf("%s", entities)+":"+fmt.Sprintf("%s", dmaList)+":"+fmt.Sprintf("%s", source)+":"+fmt.Sprintf("%s", normalizationOrder)+":"+fmt.Sprintf("%s", norm)+":"+fmt.Sprintf("%s", bySource)+":"+fmt.Sprintf("%s", sameStores))
 
 	if found {
 		switch m := iface.(type) {
@@ -257,7 +265,7 @@ func GetSQLData(ctx context.Context, entities []string, queryName string, parame
 	return MultiEntityData{Error: "Unable to retrieve from SQL Data"}
 }
 
-func GetSQLDataLive(ctx context.Context, entities []string, queryName string, parameters map[string][]string, startDate time.Time, endDate time.Time) MultiEntityData {
+func GetSQLDataLive(ctx context.Context, entities []string, queryName string, dmaList []string, source []string, normalizationOrder []string, norm []string, smoothing []string, bySource []string, sameStores []string, startDate time.Time, endDate time.Time) MultiEntityData {
 	timer := time.Now()
 
 	metaMap := map[string]SeriesMeta{
@@ -318,7 +326,6 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 	}
 
 	var dmaRestriction string
-	var dmaList []string
 	var movementSource = "both"
 	var movementSourceKey = "all"
 	var dataTable = "location.brand_no_filter_update"
@@ -328,81 +335,73 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, pa
 	var secondaryTypeJoin = "and a.subfield = b.secondary_type"
 	var subfield = `''`
 
-	if parameters != nil {
-		dmaList = parameters["DMA"]
-		if len(dmaList) > 0 {
-			dmaRestriction = " and dma in (" + listOfStringsToQuotedCommaList(dmaList) + ")"
-			isBigQuery = true
-		} else {
-			dmaRestriction = ""
+	if len(dmaList) > 0 {
+		dmaRestriction = " and dma in (" + listOfStringsToQuotedCommaList(dmaList) + ")"
+		isBigQuery = true
+	} else {
+		dmaRestriction = ""
+	}
+
+	if isBigQuery {
+		dataTable = "altdatahub.placeiq_daily.uq_results_no_filter"
+	} else {
+		dataTable = "location.brand_no_filter_update"
+	}
+
+	if len(source) > 0 {
+		switch source[0] {
+		case "Foreground":
+			movementSource = "foreground"
+		case "Background":
+			movementSource = "background"
+		case "Background149":
+			movementSource = "background"
+			movementSourceKey = "149"
+		case "Background231":
+			movementSource = "background"
+			movementSourceKey = "231"
+		case "Background305":
+			movementSource = "background"
+			movementSourceKey = "305"
+		}
+	}
+
+	if len(norm) > 0 && len(normalizationOrder) > 0 && len(smoothing) > 0 {
+		switch norm[0] {
+		case "raw":
+			primaryType = "raw"
+		case "placeiq":
+			primaryType = "placeiq"
+		case "alphahat_basket":
+			primaryType = "basket"
+		case "alphahat_nobasket":
+			primaryType = "nobasket"
 		}
 
-		if isBigQuery {
-			dataTable = "altdatahub.placeiq_daily.uq_results_no_filter"
-		} else {
-			dataTable = "location.brand_no_filter_update"
+		if smoothing[0] == "smoothed" && primaryType != "raw" {
+			primaryType = primaryType + "_smoothed"
 		}
 
-		source := parameters["Movement Source"]
-		if len(source) > 0 {
-			switch source[0] {
-			case "Foreground":
-				movementSource = "foreground"
-			case "Background":
-				movementSource = "background"
-			case "Background149":
-				movementSource = "background"
-				movementSourceKey = "149"
-			case "Background231":
-				movementSource = "background"
-				movementSourceKey = "231"
-			case "Background305":
-				movementSource = "background"
-				movementSourceKey = "305"
+		switch normalizationOrder[0] {
+		case "add_then_normalize":
+			subfield = "''"
+
+			if primaryType == "raw" {
+				secondaryTypeJoin = "and b.secondary_type = ''"
+			} else if movementSource == "background" {
+				secondaryTypeJoin = "and b.secondary_type = 'bg'"
+			} else if movementSource == "foreground" {
+				secondaryTypeJoin = "and b.secondary_type = 'fg'"
+			} else if movementSource == "both" {
+				secondaryTypeJoin = "and b.secondary_type = 'both'"
 			}
-		}
-
-		norm := parameters["Normalization"]
-		normOrder := parameters["Normalization Order"]
-		smoothing := parameters["Smoothing"]
-
-		if len(norm) > 0 && len(normOrder) > 0 && len(smoothing) > 0 {
-			switch norm[0] {
-			case "raw":
-				primaryType = "raw"
-			case "placeiq":
-				primaryType = "placeiq"
-			case "alphahat_basket":
-				primaryType = "basket"
-			case "alphahat_nobasket":
-				primaryType = "nobasket"
+		case "normalize_then_add":
+			if isBigQuery {
+				subfield = "cast(movement_source_key as string)"
+			} else {
+				subfield = "cast(movement_source_key as char(45))"
 			}
-
-			if smoothing[0] == "smoothed" && primaryType != "raw" {
-				primaryType = primaryType + "_smoothed"
-			}
-
-			switch normOrder[0] {
-			case "add_then_normalize":
-				subfield = "''"
-
-				if primaryType == "raw" {
-					secondaryTypeJoin = "and b.secondary_type = ''"
-				} else if movementSource == "background" {
-					secondaryTypeJoin = "and b.secondary_type = 'bg'"
-				} else if movementSource == "foreground" {
-					secondaryTypeJoin = "and b.secondary_type = 'fg'"
-				} else if movementSource == "both" {
-					secondaryTypeJoin = "and b.secondary_type = 'both'"
-				}
-			case "normalize_then_add":
-				if isBigQuery {
-					subfield = "cast(movement_source_key as string)"
-				} else {
-					subfield = "cast(movement_source_key as char(45))"
-				}
-				secondaryTypeJoin = "and a.subfield = b.secondary_type"
-			}
+			secondaryTypeJoin = "and a.subfield = b.secondary_type"
 		}
 	}
 
@@ -547,7 +546,7 @@ ORDER BY dma_total desc`
 	} else {
 		temp = GenericSQLQuery(ctx, query, metaMap, " in ", isWeight)
 	}
-	log.Infof(ctx, "time taken was %v\nentities = %s\nqueryName = %s\nparameters = %s\nstartDate = %s\nendDate = %s", time.Since(timer), entities, queryName, parameters, startDate, endDate)
+	log.Infof(ctx, "time taken was %v\nentities = %s\nqueryName = %s\nstartDate = %s\nendDate = %s", time.Since(timer), entities, queryName, startDate, endDate)
 
 	return temp
 }
