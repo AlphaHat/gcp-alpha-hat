@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/AlphaHat/gcp-alpha-hat/quandl"
@@ -16,8 +17,9 @@ import (
 	"github.com/AlphaHat/gcp-alpha-hat/db"
 	"github.com/AlphaHat/gcp-alpha-hat/timeseries"
 
-	"google.golang.org/appengine/log"
 	"reflect"
+
+	"google.golang.org/appengine/log"
 )
 
 func extractTickerFromUniverseMember(universeMember component.QueryComponent) (string, error) {
@@ -98,6 +100,8 @@ func GetQuandlDataFull(ctx context.Context, ticker string, seriesName string) *t
 
 	switch t := tsRaw.(type) {
 	case timeseries.TimeSeries:
+		// t.DisplayName = seriesName
+		// t.Units = "$"
 		return &t
 	}
 
@@ -129,16 +133,17 @@ func quandlConnect(columnName string) *cache.GenericCache {
 			}
 
 			if columnName != "Volume" && columnName != "Days to Cover" {
-				ts := timeseries.NewTimeSeries(date, data, ticker, q.QuandlName)
-				ts.Source = q.SourceName
-				ts.DataEnd = q.ToDate
+				ts := timeseries.NewTimeSeries(date, data, ticker, strings.Split(strings.Split(ticker, "/")[1], "_")[1])
+				ts.Source = "Quandl"
+				// ts.DataEnd = q.ToDate
 
 				// The units are already built in to the highcharts object
-				if columnName == "Value" {
-					ts.Units = q.GetUnits()
-				} else {
-					ts.Units = fmt.Sprintf("%s", columnName)
-				}
+				// if columnName == "Value" {
+				// 	ts.Units = q.GetUnits()
+				// } else {
+				// 	ts.Units = fmt.Sprintf("%s", columnName)
+				// }
+				ts.Units = "$"
 
 				db.DatabaseInsert(ctx, "quandl", ts, "")
 

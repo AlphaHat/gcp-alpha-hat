@@ -223,6 +223,14 @@ func GenericSQLQuery(ctx context.Context, query string, metaMap map[string]Serie
 	return m
 }
 
+func listOfStringsToUnquotedCommaList(entities []string) string {
+	for i, v := range entities {
+		entities[i] = strings.Replace(v, "'", "\\'", -1)
+	}
+
+	return strings.Join(entities, ", ")
+}
+
 func listOfStringsToQuotedCommaList(entities []string) string {
 	for i, v := range entities {
 		entities[i] = "'" + strings.Replace(v, "'", "\\'", -1) + "'"
@@ -326,12 +334,12 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, dm
 	}
 
 	var dmaRestriction string
-	var movementSource = "both"
-	var movementSourceKey = "all"
+	// var movementSource = "both"
 	var dataTable = "location.brand_no_filter_update"
-	var multiplier = "1000000"
+	var multiplier = "2000000"
 
-	var primaryType string
+	// var primaryType string
+	var visitCount string
 	var secondaryTypeJoin = "and a.subfield = b.secondary_type"
 	var subfield = `''`
 
@@ -348,74 +356,52 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, dm
 		dataTable = "location.brand_no_filter_update"
 	}
 
-	if len(source) > 0 {
-		switch source[0] {
-		case "Foreground":
-			movementSource = "foreground"
-		case "Background":
-			movementSource = "background"
-		case "Background149":
-			movementSource = "background"
-			movementSourceKey = "149"
-		case "Background231":
-			movementSource = "background"
-			movementSourceKey = "231"
-		case "Background305":
-			movementSource = "background"
-			movementSourceKey = "305"
-		}
-	}
-
-	if len(norm) > 0 && len(normalizationOrder) > 0 && len(smoothing) > 0 {
+	if len(norm) > 0 {
 		switch norm[0] {
 		case "raw":
-			primaryType = "raw"
-		case "placeiq":
-			primaryType = "placeiq"
-		case "alphahat_basket":
-			primaryType = "basket"
+			// visitCount = " sum(visit_count) "
+			visitCount = "sum(raw_visit)"
 		case "alphahat_nobasket":
-			primaryType = "nobasket"
+			// visitCount = " sum(2000000*visit_count/factor) "
+			visitCount = "sum(normalized_visit)"
+		case "census":
+			// visitCount = " avg( (2000000*visit_count/factor)/census_ratio ) "
+			visitCount = "sum(census_visit)"
 		}
 
-		if smoothing[0] == "smoothed" && primaryType != "raw" {
-			primaryType = primaryType + "_smoothed"
-		}
+		// switch normalizationOrder[0] {
+		// case "add_then_normalize":
+		// 	subfield = "''"
 
-		switch normalizationOrder[0] {
-		case "add_then_normalize":
-			subfield = "''"
-
-			if primaryType == "raw" {
-				secondaryTypeJoin = "and b.secondary_type = ''"
-			} else if movementSource == "background" {
-				secondaryTypeJoin = "and b.secondary_type = 'bg'"
-			} else if movementSource == "foreground" {
-				secondaryTypeJoin = "and b.secondary_type = 'fg'"
-			} else if movementSource == "both" {
-				secondaryTypeJoin = "and b.secondary_type = 'both'"
-			}
-		case "normalize_then_add":
-			if isBigQuery {
-				subfield = "cast(movement_source_key as string)"
-			} else {
-				subfield = "cast(movement_source_key as char(45))"
-			}
-			secondaryTypeJoin = "and a.subfield = b.secondary_type"
-		}
+		// 	if primaryType == "raw" {
+		// 		secondaryTypeJoin = "and b.secondary_type = ''"
+		// 	} else if movementSource == "background" {
+		// 		secondaryTypeJoin = "and b.secondary_type = 'bg'"
+		// 	} else if movementSource == "foreground" {
+		// 		secondaryTypeJoin = "and b.secondary_type = 'fg'"
+		// 	} else if movementSource == "both" {
+		// 		secondaryTypeJoin = "and b.secondary_type = 'both'"
+		// 	}
+		// case "normalize_then_add":
+		// 	if isBigQuery {
+		// 		subfield = "cast(movement_source_key as string)"
+		// 	} else {
+		// 		subfield = "cast(movement_source_key as char(45))"
+		// 	}
+		// 	secondaryTypeJoin = "and a.subfield = b.secondary_type"
+		// }
 	}
 
 	var movementSourceQuery string
-	if movementSource == "foreground" {
-		movementSourceQuery = `where movement_source = 'foreground'`
-	} else if movementSource == "background" {
-		if movementSourceKey != "all" {
-			movementSourceQuery = `where movement_source_key = ` + movementSourceKey
-		} else {
-			movementSourceQuery = `where movement_source = 'background'`
-		}
-	} else {
-		movementSourceQuery = `where movement_source in ('background', 'foreground')`
+	movementSourceQuery = " and movement_source_key in ( " + listOfStringsToUnquotedCommaList(source) + " )"
+
+	var sameStoresQuery string
+	if len(sameStores) > 0 && sameStores[0] == "true" {
+		sameStoresQuery = "AND same_store = 1 "
+	}
+
+	if len(bySource) > 0 && bySource[0] == "true" {
+		subfield = " CAST(movement_source_key AS CHAR(50)) "
 	}
 
 	var query string
@@ -435,28 +421,82 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, dm
 				`) a JOIN altdatahub.placeiq_daily.factors_new b 
 				on a.date = b.local_date
 				` + secondaryTypeJoin + `
-				where b.primary_type = '` + primaryType + `'
+				where b.primary_type = 'nobasket_smoothed'
 				GROUP BY date, brand, field, dma
 				ORDER BY date, brand, field, dma 
 				`
 
 			isBigQuery = true
 		} else {
-			query = `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, 
-			` + subfield + ` as subfield, sum(visit_count) as visit_count FROM ` + dataTable + `
-			` + movementSourceQuery + `
-			and brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction + `
-			group by local_date, brand, movement_source_key`
+			// query = `SELECT date_format(local_date, '%Y-%m-%d') as date, brand, "Number of Visits" as field,
+			// ` + subfield + ` as subfield, sum(visit_count) as visit_count FROM ` + dataTable + `
+			// ` + movementSourceQuery + `
+			// and brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction + `
+			// group by local_date, brand, movement_source_key`
 
-			query = `SELECT a.date, a.brand, a.field, '' as subfield, ` + multiplier + ` * sum(a.visit_count / b.factor) as normalized_visit_count FROM ( ` +
-				query +
-				`) a JOIN location.factors_new b 
-				on a.date = b.local_date
-				` + secondaryTypeJoin + `
-				where b.primary_type = '` + primaryType + `'
-				GROUP BY date, brand, field
-				ORDER BY date, brand, field 
-				`
+			// query = `SELECT a.date, a.brand, a.field, '' as subfield, ` + multiplier + ` * sum(a.visit_count / b.factor) as normalized_visit_count FROM ( ` +
+			// 	query +
+			// 	`) a JOIN location.factors_new b
+			// 	on a.date = b.local_date
+			// 	` + secondaryTypeJoin + `
+			// 	where b.primary_type = '` + primaryType + `'
+			// 	GROUP BY date, brand, field
+			// 	ORDER BY date, brand, field
+			// 	`
+
+			query = `
+			SELECT date_format(date, '%Y-%m-%d') as date, brand, "Number of Visits" as field, ` + subfield + ` as subfield, ` + visitCount + ` as visit_count
+			FROM location.brand_with_factor
+			WHERE brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction + `
+			` + sameStoresQuery + `
+			` + movementSourceQuery + `
+			GROUP BY date, brand, field, subfield
+			`
+
+			// query = `
+			// SELECT date_format(a.local_date, '%Y-%m-%d') as date, a.brand, "Number of Visits" as field, ` + subfield + ` as subfield,
+			// -- raw: visit_count
+			// -- normalized: avg(2000000*visit_count/factor)
+			// -- census: avg( (2000000*visit_count/factor)/census_ratio )
+			// ` + visitCount + ` as visit_count
+
+			// FROM location.brand_no_filter a
+			// JOIN location.factors_new f
+			// on a.local_date = f.local_date
+			// and CAST(a.movement_source_key as CHAR(50)) = f.secondary_type
+			// and f.primary_type = 'nobasket_smoothed'
+			// JOIN location.category c
+			// ON a.brand = c.alphahat_brand
+			// JOIN
+			// (
+			// SELECT monthly_visit.category, movement_source_key, year, month, visit, census, visit/census as census_ratio
+			// FROM
+			// (
+			// SELECT category, movement_source_key, EXTRACT(year from a.local_date) as yr, EXTRACT(month from a.local_date) as mth, sum(2000000*visit_count/factor) as visit
+			// FROM location.brand_no_filter a
+			// JOIN location.factors_new f
+			// on a.local_date = f.local_date
+			// and CAST(a.movement_source_key as CHAR(50)) = f.secondary_type
+			// and f.primary_type = 'nobasket_smoothed'
+			// JOIN location.category c
+			// ON a.brand = c.alphahat_brand
+			// ` + sameStoresQuery + `
+			// GROUP BY category, movement_source_key, yr, mth
+			// ) monthly_visit
+			// JOIN location.census_categories c
+			// ON monthly_visit.yr = c.year
+			// AND monthly_visit.mth = c.month
+			// AND monthly_visit.category = c.category
+			// ) d
+			// ON c.category = d.category
+			// AND EXTRACT(month from a.local_date) = d.month
+			// AND EXTRACT(year from a.local_date) = d.year
+			// AND a.movement_source_key = d.movement_source_key
+			// ` + sameStoresQuery + `
+			// AND a.brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction + `
+			// ` + movementSourceQuery + `
+			// GROUP BY date, brand, field, subfield
+			// `
 		}
 
 	case "Traffic Contribution":

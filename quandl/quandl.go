@@ -10,7 +10,6 @@ import (
 	"io/ioutil"
 
 	"reflect"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -24,6 +23,7 @@ import (
 const (
 	quandlApiRoot    = "https://www.quandl.com/api/v1/datasets/"
 	quandlSearchRoot = "https://www.quandl.com/api/v1/datasets.json"
+	sharadarApiRoot  = "https://www.quandl.com/api/v3/datatables/SHARADAR/SF1.json"
 
 	sharadarList = "http://www.sharadar.com/meta/indicators.txt"
 
@@ -76,7 +76,7 @@ var macCsvCachce *cache.GenericCache = cache.NewGenericCache(time.Hour*6, "macCs
 	return val, found
 })
 
-type QuandlResponse struct {
+type QuandlResponse1 struct {
 	SourceCode  string      `json:"source_code" bson:"source_code"`
 	SourceName  string      `json:"source_name" bson:"source_name"`
 	QuandlName  string      `json:"name"`
@@ -87,6 +87,14 @@ type QuandlResponse struct {
 	Description string      `json:"description" bson:"description"`
 	Columns     []string    `json:"column_names" bson:"column_names"`
 	Data        interface{} `json:"data" bson:"data"`
+}
+
+type QuandlData3 struct {
+	Data interface{} `json:"data"`
+}
+
+type QuandlResponse struct {
+	DataTable QuandlData3 `json:"datatable"`
 }
 
 /*type TimeSeriesDataPoint struct {
@@ -130,11 +138,20 @@ func assembleURLwithDates(identifier string, startDate string, endDate string) s
 
 func assembleURLwithoutDates(identifier string) string {
 	var url string
+
+	provider := strings.Split(identifier, "/")
+
 	if authToken == "" {
 		fmt.Printf("No auth token set. API calls are limited.\n")
 		url = fmt.Sprintf("%s%s%s", quandlApiRoot, identifier, format)
 	} else {
-		url = fmt.Sprintf("%s%s%s?auth_token=%s", quandlApiRoot, identifier, format, authToken)
+		if len(provider) > 0 && provider[0] == "SF1" {
+			tickerComponents := strings.Split(provider[1], "_")
+
+			url = fmt.Sprintf("%s?dimension=%s&ticker=%s&qopts.columns=datekey,%s&api_key=%s", sharadarApiRoot, tickerComponents[2], tickerComponents[0], strings.ToLower(tickerComponents[1]), authToken)
+		} else {
+			url = fmt.Sprintf("%s%s%s?auth_token=%s", quandlApiRoot, identifier, format, authToken)
+		}
 	}
 	return url
 }
@@ -170,9 +187,9 @@ func getDataFromURL(ctx context.Context, url string) (*QuandlResponse, error) {
 		return nil, err
 	}
 
-	if quandlResponse.SourceCode == "RAYMOND" && quandlResponse.SourceName == "" {
-		quandlResponse.SourceName = "U.S. Securities and Exchange Commission"
-	}
+	// if quandlResponse.SourceCode == "RAYMOND" && quandlResponse.SourceName == "" {
+	// 	quandlResponse.SourceName = "U.S. Securities and Exchange Commission"
+	// }
 
 	//fmt.Printf("%s\n", quandlResponse)
 	return quandlResponse, nil
@@ -195,18 +212,19 @@ func GetAllHistory(ctx context.Context, identifier string) (*QuandlResponse, err
 }
 
 func (q *QuandlResponse) GetUnits() string {
-	r := regexp.MustCompile(`Units[A-Za-z<>\/]*:([^<]+)`)
+	// r := regexp.MustCompile(`Units[A-Za-z<>\/]*:([^<]+)`)
 
-	v := r.FindString(q.Description)
+	// v := r.FindString(q.Description)
 
-	r = regexp.MustCompile("<.*>")
-	v = r.ReplaceAllString(v, "")
+	// r = regexp.MustCompile("<.*>")
+	// v = r.ReplaceAllString(v, "")
 
-	if v == "Units: currency" {
-		v = "$"
-	}
+	// if v == "Units: currency" {
+	// 	v = "$"
+	// }
 
-	return v
+	// return v
+	return ""
 }
 
 func (q *QuandlResponse) GetMultiplier() float64 {
@@ -256,15 +274,16 @@ func (q *QuandlResponse) GetTimeSeriesDate(ctx context.Context) []string {
 // GetTimeSeries returns a date vector and the value vector for a particular
 // column in the QuandlResponse
 func (q *QuandlResponse) GetTimeSeries(ctx context.Context, column string) ([]string, []float64) {
-	if q == nil || q.Data == nil {
+	if q == nil || q.DataTable.Data == nil {
 		return nil, nil
 	}
 
-	dataArray := q.Data.([]interface{})
+	dataArray := q.DataTable.Data.([]interface{})
 
 	dateVector := make([]string, 0, len(dataArray))
 	dataVector := make([]float64, 0, len(dataArray))
-	dateColumnNum := q.getColumnNum("Date")
+	// dateColumnNum := q.getColumnNum("Date")
+	dateColumnNum := 0
 	// If the date column isn't called "Date", try "Settlement Date"
 	if dateColumnNum == -1 {
 		dateColumnNum = q.getColumnNum("Settlement Date")
@@ -273,7 +292,8 @@ func (q *QuandlResponse) GetTimeSeries(ctx context.Context, column string) ([]st
 	if dateColumnNum == -1 {
 		dateColumnNum = 0
 	}
-	dataColumnNum := q.getColumnNum(column)
+	// dataColumnNum := q.getColumnNum(column)
+	dataColumnNum := 1
 
 	if dateColumnNum == -1 || dataColumnNum == -1 {
 		return nil, nil
@@ -298,7 +318,7 @@ func (q *QuandlResponse) GetTimeSeries(ctx context.Context, column string) ([]st
 			case int:
 				dataVector = append(dataVector, float64(vv[dataColumnNum].(int))*q.GetMultiplier())
 			default:
-				log.Infof(ctx, "error: Problem reading %q (%v) as a float64. Data type is %s. Column is %s. Code is %s.\n", vv[dataColumnNum], vv[dataColumnNum], reflect.TypeOf(vv[dataColumnNum]), column, q.Code)
+				log.Infof(ctx, "error: Problem reading %q (%v) as a float64. Data type is %s. Column is %s. \n", vv[dataColumnNum], vv[dataColumnNum], reflect.TypeOf(vv[dataColumnNum]), column)
 				dataVector = append(dataVector, 0)
 				//return nil, nil
 			}
@@ -314,56 +334,58 @@ func (q *QuandlResponse) GetTimeSeries(ctx context.Context, column string) ([]st
 // getLikelyDataColumnName finds the column most likely to be the "data"
 // column. It either uses adjusted close or just takes the last column in the series
 func (q *QuandlResponse) getLikelyDataColumnName() string {
-	// Get the column called Adj. Close
-	adjustedCloseColumn := q.getColumnNum("Adj. Close")
+	return ""
+	// // Get the column called Adj. Close
+	// adjustedCloseColumn := q.getColumnNum("Adj. Close")
 
-	if adjustedCloseColumn == -1 {
-		adjustedCloseColumn = q.getColumnNum("Adjusted Close")
-	}
+	// if adjustedCloseColumn == -1 {
+	// 	adjustedCloseColumn = q.getColumnNum("Adjusted Close")
+	// }
 
-	if len(q.Columns) < 1 {
-		return "N/A"
-	} else if adjustedCloseColumn == -1 {
-		// If there's no Adj. Close column, get the Close column
-		adjustedCloseColumn = q.getColumnNum("Close")
-		if adjustedCloseColumn == -1 {
-			rateColumn := q.getColumnNum("Rate")
-			if rateColumn == -1 {
-				// Return the last column
-				settleColumn := q.getColumnNum("Settle")
-				if settleColumn == -1 {
-					indexValueColumn := q.getColumnNum("Index Value")
+	// if len(q.Columns) < 1 {
+	// 	return "N/A"
+	// } else if adjustedCloseColumn == -1 {
+	// 	// If there's no Adj. Close column, get the Close column
+	// 	adjustedCloseColumn = q.getColumnNum("Close")
+	// 	if adjustedCloseColumn == -1 {
+	// 		rateColumn := q.getColumnNum("Rate")
+	// 		if rateColumn == -1 {
+	// 			// Return the last column
+	// 			settleColumn := q.getColumnNum("Settle")
+	// 			if settleColumn == -1 {
+	// 				indexValueColumn := q.getColumnNum("Index Value")
 
-					if indexValueColumn == -1 {
-						valueColumn := q.getColumnNum("Value")
+	// 				if indexValueColumn == -1 {
+	// 					valueColumn := q.getColumnNum("Value")
 
-						if valueColumn == -1 {
-							return q.Columns[len(q.Columns)-1]
-						}
+	// 					if valueColumn == -1 {
+	// 						return q.Columns[len(q.Columns)-1]
+	// 					}
 
-						return q.Columns[valueColumn]
-					}
-					return q.Columns[indexValueColumn]
-				}
-				return q.Columns[settleColumn]
-			}
-			return q.Columns[rateColumn]
-		}
-	}
+	// 					return q.Columns[valueColumn]
+	// 				}
+	// 				return q.Columns[indexValueColumn]
+	// 			}
+	// 			return q.Columns[settleColumn]
+	// 		}
+	// 		return q.Columns[rateColumn]
+	// 	}
+	// }
 
-	return q.Columns[adjustedCloseColumn]
+	// return q.Columns[adjustedCloseColumn]
 }
 
 // getColumnNum returns the column number associated with a particular column name.
 // It returns -1 if the column is not found.
 func (q *QuandlResponse) getColumnNum(column string) int {
-	for i, v := range q.Columns {
-		if v == column {
-			return i
-		}
-	}
+	// for i, v := range q.Columns {
+	// 	if v == column {
+	// 		return i
+	// 	}
+	// }
 
-	return -1
+	// return -1
+	return 0
 }
 
 // Search executes a query against the Quandl API and returns the JSON object
