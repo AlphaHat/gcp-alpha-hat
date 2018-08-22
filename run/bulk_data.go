@@ -546,6 +546,20 @@ ORDER BY dma_total desc`
 		// 	query2 +
 		// 	`) b ON a.brand = b.brand `
 
+	case "Income Group":
+		query = `
+		SELECT current_timestamp() as local_date, subfield, '% of Traffic', brand, value
+		FROM location.demographic_distribution
+		WHERE field = '` + queryName + `' and brand in (` + listOfStringsToQuotedCommaList(entities) + `)
+		`
+
+	case "Ethnic Group":
+		query = `
+		SELECT current_timestamp() as local_date, subfield, '% of Traffic', brand, value
+		FROM location.demographic_distribution
+		WHERE field = '` + queryName + `' and brand in (` + listOfStringsToQuotedCommaList(entities) + `)
+		`
+
 	case "SSS Estimate":
 		query = `SELECT date_format(date, '%Y-%m-%d') as date, brand, 'SSS Estimate' as field, '' as subfield, sss FROM location.sss
 		where brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction
