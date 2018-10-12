@@ -336,11 +336,11 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, dm
 	var dmaRestriction string
 	// var movementSource = "both"
 	var dataTable = "location.brand_no_filter_update"
-	var multiplier = "2000000"
+	//	var multiplier = "2000000"
 
 	// var primaryType string
 	var visitCount string
-	var secondaryTypeJoin = "and a.subfield = b.secondary_type"
+	//var secondaryTypeJoin = "and a.subfield = b.secondary_type"
 	var subfield = `''`
 
 	if len(dmaList) > 0 {
@@ -351,7 +351,7 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, dm
 	}
 
 	if isBigQuery {
-		dataTable = "altdatahub.placeiq_daily.uq_results_no_filter"
+		dataTable = "altdatahub.placeiq_v4.uq_dma_results"
 	} else {
 		dataTable = "location.brand_no_filter_update"
 	}
@@ -400,7 +400,13 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, dm
 		sameStoresQuery = "AND same_store = 1 "
 	}
 
-	if len(bySource) > 0 && bySource[0] == "true" {
+	if len(dmaList) > 0 {
+		if len(bySource) > 0 && bySource[0] == "true" {
+			subfield = " concat(dma, ' ', CAST (a.movement_source_key as STRING)) "
+		} else {
+			subfield = " dma "
+		}
+	} else if len(bySource) > 0 && bySource[0] == "true" {
 		subfield = " CAST(movement_source_key AS CHAR(50)) "
 	}
 
@@ -410,21 +416,17 @@ func GetSQLDataLive(ctx context.Context, entities []string, queryName string, dm
 	case "Number of Visits":
 		if len(dmaList) > 0 {
 
-			query = `SELECT local_date as date, brand, "Number of Visits" as field, 
-			` + subfield + ` as subfield, dma, sum(visit_count) as visit_count FROM ` + dataTable + `
-			` + movementSourceQuery + `
-			and brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction + ` ` + dmaRestriction + `
-			group by local_date, brand, movement_source_key, dma`
-
-			query = `SELECT a.date, a.brand, a.field, dma as subfield, ` + multiplier + ` * sum(a.visit_count / b.factor) as normalized_visit_count FROM ( ` +
-				query +
-				`) a JOIN altdatahub.placeiq_daily.factors_new b 
-				on a.date = b.local_date
-				` + secondaryTypeJoin + `
-				where b.primary_type = 'nobasket_smoothed'
-				GROUP BY date, brand, field, dma
-				ORDER BY date, brand, field, dma 
-				`
+			query = `SELECT a.local_date as date, concat(a.brand, ' - ', ` + subfield + `) as brand, "Number of Visits" as field, 
+			'' as subfield, avg(2000000*visit_count/factor) as normalized_visit FROM ` + dataTable + ` a
+			JOIN altdatahub.placeiq_v4.factors_new f
+			on a.local_date = f.local_date
+			and CAST(a.movement_source_key as STRING) = f.secondary_type
+			and f.primary_type = 'nobasket_smoothed'						
+			where brand in (` + listOfStringsToQuotedCommaList(entities) + `) ` + dateRestriction + ` ` + dmaRestriction + `
+			` + movementSourceQuery + sameStoresQuery + `
+			group by a.local_date, brand, subfield
+			order by a.local_date
+			`
 
 			isBigQuery = true
 		} else {
